@@ -11,9 +11,9 @@ const s3Client = new S3Client({
     region: region,
     credentials,
 });
-const S3_BUCKET = 'jobtrees-media-assets-staging';
+const S3_BUCKET = 'jobtrees-media-assets';
 const S3_PUBLIC_PATH = 'public/';
-const OPEN_SEARCH_URL = 'search-stageelatic-fegphos2kqdtkacicwzq3izmpq.us-east-1.es.amazonaws.com';
+const OPEN_SEARCH_URL = 'search-jobtrees-iqdimaxupmniwiygtkt7nxj3ku.us-east-1.es.amazonaws.com';
 
 const getCurrentDateTime = () => new Date().toISOString();
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -286,7 +286,7 @@ const promptUserForStartingPage = () => {
             console.log(`Generating sitemaps starting from page ${startingPage}...`);
             if (startingPage === 0) {
                 console.log('Deleting existing sitemaps...');
-                // await clearExistingSitemaps();
+                await clearExistingSitemaps();
             }
 
             const indexnames = [
