@@ -281,7 +281,7 @@ const promptUserForStartingPage = () => {
 
 (async () => {
   try {
-    const choice = 2;
+    const choice = 1;
     const startingPage = 58; 
     if (choice === 1) {
       console.log(`Generating sitemaps starting from page ${startingPage}...`);
