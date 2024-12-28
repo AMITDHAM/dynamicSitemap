@@ -315,5 +315,6 @@ const promptUserForStartingPage = () => {
     console.error('Error during the process:', error.message);
   } finally {
     rl.close();
+    process.exit(0);
   }
 })();
