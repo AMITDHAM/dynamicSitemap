@@ -14,6 +14,7 @@ const s3Client = new S3Client({
 const S3_BUCKET = 'jobtrees-media-assets-staging';
 const S3_PUBLIC_PATH = 'public/';
 const OPEN_SEARCH_URL = 'search-stageelatic-fegphos2kqdtkacicwzq3izmpq.us-east-1.es.amazonaws.com';
+const keepAlive = process.env.KEEP_ALIVE || false;
 
 const getCurrentDateTime = () => new Date().toISOString();
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -281,7 +282,7 @@ const promptUserForStartingPage = () => {
 (async () => {
   try {
     const choice = 2;
-    const startingPage = 0; 
+    const startingPage = 58; 
     if (choice === 1) {
       console.log(`Generating sitemaps starting from page ${startingPage}...`);
       if (startingPage === 0) {
@@ -315,6 +316,13 @@ const promptUserForStartingPage = () => {
     console.error('Error during the process:', error.message);
   } finally {
     rl.close();
-    process.exit(0);
+    if (!keepAlive) {
+        process.exit(0); // Stop the service after completion
+      }
   }
 })();
+if (keepAlive) {
+    const http = require('http');
+    const server = http.createServer(() => {});
+    server.listen(process.env.PORT || 3000);
+  }
