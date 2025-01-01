@@ -297,16 +297,16 @@ const promptUserForStartingPage = () => {
       const startingPage = await promptUserForStartingPage();
 
       console.log(`Generating sitemaps starting from page ${startingPage}...`);
-      // if (startingPage === 0) {
-      //   console.log('Deleting existing sitemaps...');
-      //   await clearExistingSitemaps();
-      // }
+      if (startingPage === 0) {
+        console.log('Deleting existing sitemaps...');
+        await clearExistingSitemaps();
+      }
       const startIndex = startingPage === 0 ? 1 : startingPage;
       const indexnames = [
-        // 'linkup_postings',
+        'linkup_postings',
         'adzuna_postings',
-        // 'indeed_jobs_postings',
-        // 'big_job_site_postings',
+        'indeed_jobs_postings',
+        'big_job_site_postings',
       ];
       for (const indexName of indexnames) {
         await generateSitemapXml(indexName, startIndex);
