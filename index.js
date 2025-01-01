@@ -10,12 +10,6 @@ const credentials = {
 const S3_BUCKET = 'jobtrees-media-assets';
 const S3_PUBLIC_PATH = 'public/';
 const OPEN_SEARCH_URL = 'search-jobtrees-iqdimaxupmniwiygtkt7nxj3ku.us-east-1.es.amazonaws.com';
-const indexnames = [
-  'linkup_postings',
-  'adzuna_postings',
-  'indeed_jobs_postings',
-  'big_job_site_postings',
-];
 const s3Client = new S3Client({
   region: region,
   credentials,
@@ -67,86 +61,92 @@ const getExistingSitemapFiles = async () => {
 };
 
 const generateSitemapXml = async (indexName, startIndex) => {
-  let pageNumber = startIndex; // Page number starts from the specified index
-  let fileCounter = 0; // File counter starts at 0 for each index
+  let pageNumber = startIndex; // Start from the specified page
+  let fileCounter = pageNumber - 1; // Ensure unique file naming
   const pageSize = 5000;
-  let hasMoreResults = true;
 
   try {
-    while (hasMoreResults) {
-      console.log(`Fetching page ${pageNumber} for index ${indexName}...`);
-
-      const requestBody = {
-        query: { match_all: {} },
-        from: (pageNumber - 1) * pageSize,
-        size: pageSize,
+      // Fetch the total count to calculate the expected number of pages
+      const requestBody = { query: { match_all: {} } };
+      const countRequest = {
+          host: OPEN_SEARCH_URL,
+          path: `/${indexName}/_count`,
+          service: 'es',
+          region: region,
+          method: 'POST',
+          body: JSON.stringify(requestBody),
+          headers: { 'Content-Type': 'application/json' },
       };
 
-      const request = {
-        host: OPEN_SEARCH_URL,
-        path: `/${indexName}/_search`,
-        service: 'es',
-        region: region,
-        method: 'POST',
-        body: JSON.stringify(requestBody),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      };
-
-      aws4.sign(request, {
-        accessKeyId: credentials.accessKeyId,
-        secretAccessKey: credentials.secretAccessKey,
+      aws4.sign(countRequest, credentials);
+      const countResponse = await fetch(`https://${countRequest.host}${countRequest.path}`, {
+          method: countRequest.method,
+          headers: countRequest.headers,
+          body: countRequest.body,
       });
+      const countResponseBody = await countResponse.json();
+      const totalCount = countResponseBody.count;
 
-      const response = await fetch(`https://${request.host}${request.path}`, {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-      });
+      const totalPages = Math.ceil(totalCount / pageSize);
+      console.log(`Total pages for index ${indexName}: ${totalPages}`);
 
-      const responseBody = await response.json();
-      const jobPostings = (responseBody.hits && responseBody.hits.hits) || [];
-      if (jobPostings.length === 0) {
-        console.log(`No job postings found for page ${pageNumber} in index ${indexName}. Ending generation.`);
-        hasMoreResults = false;
-        break;
+      // Generate sitemaps for all pages starting from the given index
+      while (pageNumber <= totalPages) {
+          console.log(`Fetching page ${pageNumber} for index ${indexName}...`);
+          const searchRequestBody = {
+              query: { match_all: {} },
+              from: (pageNumber - 1) * pageSize,
+              size: pageSize,
+          };
+
+          const searchRequest = {
+              host: OPEN_SEARCH_URL,
+              path: `/${indexName}/_search`,
+              service: 'es',
+              region: region,
+              method: 'POST',
+              body: JSON.stringify(searchRequestBody),
+              headers: { 'Content-Type': 'application/json' },
+          };
+
+          aws4.sign(searchRequest, credentials);
+          const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
+              method: searchRequest.method,
+              headers: searchRequest.headers,
+              body: searchRequest.body,
+          });
+          const searchResponseBody = await searchResponse.json();
+          const jobPostings = (searchResponseBody.hits && searchResponseBody.hits.hits) || [];
+
+          if (jobPostings.length === 0) {
+              console.log(`No job postings found for page ${pageNumber}.`);
+          } else {
+              const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+              jobPostings.forEach((posting) => {
+                  const locValue = `https://www.jobtrees.com/postid/${posting._source.id}`;
+                  root.ele('url').ele('loc', locValue).up()
+                      .ele('lastmod', getCurrentDateTime()).up()
+                      .ele('changefreq', 'daily').up()
+                      .ele('priority', 1.0).up();
+              });
+
+              const fileName = `${indexName}_${fileCounter}.xml`;
+              await uploadToS3(fileName, root.end({ pretty: true }));
+              console.log(`Sitemap ${fileName} generated and uploaded.`);
+          }
+
+          fileCounter++;
+          pageNumber++;
       }
-
-      const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
-
-      jobPostings.forEach((posting) => {
-        const postingId = posting._source.id;
-        const locValue = `https://www.jobtrees.com/postid/${postingId}`;
-
-        root.ele('url').ele('loc', locValue).up()
-          .ele('lastmod', getCurrentDateTime()).up()
-          .ele('changefreq', 'daily').up()
-          .ele('priority', 1.0).up();
-      });
-
-      const fileName = `${indexName}_${fileCounter}.xml`;
-
-      await uploadToS3(fileName, root.end({ pretty: true }));
-      console.log(`Sitemap ${fileName} generated and uploaded.`);
-
-      fileCounter++;
-      pageNumber++;
-
-      if (jobPostings.length < pageSize) {
-        console.log(`Fewer than ${pageSize} job postings found on page ${pageNumber - 1}. Ending sitemap generation.`);
-        hasMoreResults = false;
-      }
-
-      await delay(0);
-    }
   } catch (error) {
-    console.error(`Error generating sitemap for index ${indexName}:`, error.message);
+      console.error(`Error generating sitemap for index ${indexName}:`, error.message);
   }
 };
 
 const generateIndexCountSitemap = async (indices) => {
   const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+  const pageSize = 5000; // Number of postings per sitemap
+
   for (const indexName of indices) {
     try {
       const requestBody = {
@@ -175,14 +175,17 @@ const generateIndexCountSitemap = async (indices) => {
         headers: request.headers,
         body: request.body,
       });
-
       const responseBody = await response.json();
-      let totalCount = responseBody.count;
+      const totalCount = responseBody.count;
+
       if (!totalCount) {
         throw new Error(`Unable to fetch count from index ${indexName}`);
       }
 
-      const locValue = `${indexName}_${totalCount}`;
+      const sitemapCount = Math.ceil(totalCount / pageSize);
+
+      // Include the summary in the XML structure
+      const locValue = `Index: ${indexName}, Total Postings: ${totalCount}, Sitemaps to Generate: ${sitemapCount}`;
 
       root.ele('url').ele('loc', locValue).up()
         .ele('lastmod', getCurrentDateTime()).up()
@@ -197,8 +200,10 @@ const generateIndexCountSitemap = async (indices) => {
   const fileName = 'sitemap_index_counts.xml';
 
   await uploadToS3(fileName, xmlString);
-  console.log('Index count sitemap generated and uploaded.');
+  const fileUrl = `https://www.jobtrees.com/api/sitemap/${fileName}`;
+  console.log(`Index count sitemap generated and uploaded. Accessible at: ${fileUrl}`);
 };
+
 
 const uploadToS3 = async (fileName, fileContent) => {
   console.log(`Uploading file: ${fileName} to S3...`);
@@ -292,17 +297,28 @@ const promptUserForStartingPage = () => {
       const startingPage = await promptUserForStartingPage();
 
       console.log(`Generating sitemaps starting from page ${startingPage}...`);
-      if (startingPage === 0) {
-        console.log('Deleting existing sitemaps...');
-        await clearExistingSitemaps();
-      }
+      // if (startingPage === 0) {
+      //   console.log('Deleting existing sitemaps...');
+      //   await clearExistingSitemaps();
+      // }
       const startIndex = startingPage === 0 ? 1 : startingPage;
-
+      const indexnames = [
+        // 'linkup_postings',
+        'adzuna_postings',
+        // 'indeed_jobs_postings',
+        // 'big_job_site_postings',
+      ];
       for (const indexName of indexnames) {
         await generateSitemapXml(indexName, startIndex);
       }
     } else if (choice === 2) {
-      await generateIndexCountSitemap(indexnames)
+      const indexnamess = [
+        'linkup_postings',
+        'adzuna_postings',
+        'indeed_jobs_postings',
+        'big_job_site_postings',
+      ];
+      await generateIndexCountSitemap(indexnamess)
       const existingFiles = await getExistingSitemapFiles();
       await generateMainSitemapXml(existingFiles);
     } else {
