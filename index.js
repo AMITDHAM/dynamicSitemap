@@ -45,17 +45,31 @@ const clearExistingSitemaps = async () => {
 };
 
 const getExistingSitemapFiles = async () => {
-  try {
-    const listParams = {
-      Bucket: S3_BUCKET,
-      Prefix: S3_PUBLIC_PATH,
-    };
+  let isTruncated = true; // Indicates if more pages are available
+  let continuationToken = null; // Token for the next set of results
+  const files = [];
 
-    const { Contents } = await s3Client.send(new ListObjectsV2Command(listParams));
-    const files = Contents ? Contents.map((item) => item.Key) : [];
-    return files.filter((file) => file.endsWith('.xml'));
+  try {
+    while (isTruncated) {
+      const listParams = {
+        Bucket: S3_BUCKET,
+        Prefix: S3_PUBLIC_PATH,
+        ContinuationToken: continuationToken, // Set continuation token for pagination
+      };
+
+      const response = await s3Client.send(new ListObjectsV2Command(listParams));
+      if (response.Contents) {
+        files.push(...response.Contents.map(item => item.Key));
+      }
+
+      // Check if more files are available
+      isTruncated = response.IsTruncated;
+      continuationToken = response.NextContinuationToken;
+    }
+
+    return files.filter(file => file.endsWith('.xml'));
   } catch (error) {
-    console.error('Error fetching existing sitemap files:', error.message);
+    console.error('Error fetching files from S3:', error.message);
     return [];
   }
 };
