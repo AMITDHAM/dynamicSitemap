@@ -2,14 +2,15 @@ const { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, 
 const aws4 = require('aws4');
 const readline = require('readline');
 const { create } = require('xmlbuilder');
-const region = 'us-east-1';
+require('dotenv').config({ path: '.env.local' });
+const region = process.env.region;
 const credentials = {
-  accessKeyId: 'AKIA4SWDP73D3EEMFZ4F',
-  secretAccessKey: '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',
+  accessKeyId: process.env.accessKeyId,
+  secretAccessKey: process.env.secretAccessKey,
 };
-const S3_BUCKET = 'jobtrees-media-assets';
-const S3_PUBLIC_PATH = 'public/';
-const OPEN_SEARCH_URL = 'search-jobtrees-iqdimaxupmniwiygtkt7nxj3ku.us-east-1.es.amazonaws.com';
+const S3_BUCKET = process.env.S3_BUCKET;
+const S3_PUBLIC_PATH = process.env.S3_PUBLIC_PATH;
+const OPEN_SEARCH_URL = process.env.OPEN_SEARCH_URL;
 const s3Client = new S3Client({
   region: region,
   credentials,
