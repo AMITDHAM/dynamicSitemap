@@ -348,7 +348,7 @@ const parsePageInput = (input, totalPages) => {
 };
 
 const generateMainSitemapXml = async (existingFiles) => {
-  const root = create('sitemapindex').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+  const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
   const excludedFiles = [
     'public/sitemap_Alljobs.xml',
     'public/sitemap_index_counts.xml'
