@@ -286,28 +286,28 @@ const promptUserForStartingPage = () => {
 
 (async () => {
   try {
-    const choice = await promptUserForChoice();
+    // const choice = await promptUserForChoice();
     const indices = [
       'adzuna_postings',
     ];
 
-    if (choice === 1) {
-      const startingPage = await promptUserForStartingPage();
-      console.log(`Generating sitemaps starting from page ${startingPage}...`);
-      // if (startingPage === 0) {
-      //   console.log('Deleting existing sitemaps...');
-      //   // await clearExistingSitemaps();
-      // }
-      const startIndex = startingPage === 0 ? 1 : startingPage;
-      for (const indexName of indices) {
-        await generateSitemapXmlSerial(indexName, startIndex);
-      }
-    } else if (choice === 2) {
-      console.log('Generating all sitemaps...');
+    // if (choice === 1) {
+    //   const startingPage = await promptUserForStartingPage();
+    //   console.log(`Generating sitemaps starting from page ${startingPage}...`);
+    //   // if (startingPage === 0) {
+    //   //   console.log('Deleting existing sitemaps...');
+    //   //   // await clearExistingSitemaps();
+    //   // }
+    //   const startIndex = startingPage === 0 ? 1 : startingPage;
+    //   for (const indexName of indices) {
+    //     await generateSitemapXmlSerial(indexName, startIndex);
+    //   }
+    // } else if (choice === 2) {
+      // console.log('Generating all sitemaps...');
       await generateAllSitemaps(indices);
-    } else {
-      console.log('Invalid choice. Exiting...');
-    }
+    // } else {
+    //   console.log('Invalid choice. Exiting...');
+    // }
   } catch (error) {
     console.error('Error during the process:', error.message);
   } finally {
