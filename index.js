@@ -497,7 +497,7 @@ const rl = readline.createInterface({
 const promptUserForChoice = () => {
   return new Promise((resolve) => {
     rl.question(
-      'Choose an option:\n1. Generate all sitemaps (serial wise)\n2. Generate all sitemaps (range or specifics after 0)\n3. Generate only the alljobs sitemap and index data count sitemap index from existing files\n4. Generate missed sitemaps\n5. Cleanup outdated files\n6. Delete all sitemaps\nYour choice: ',
+      'Choose an option:\n1. Generate all sitemaps (serial wise)\n2. Generate all sitemaps (range or specifics after 0)\n3. Generate only the alljobs sitemap and index data count sitemap index from existing files\n4. Generate missed sitemaps\n5. Cleanup outdated files\n6. Get all sitemaps number\nYour choice: ',
       (choice) => {
         resolve(parseInt(choice, 10));
       }
@@ -554,8 +554,9 @@ const promptUserForStartingPage = () => {
       console.log('Generating sitemaps and cleaning up outdated files...');
       await generateSitemapsAndCleanup(indices);
     } else if (choice === 6) {
-      console.log('Deleting existing sitemaps...');
-      await clearExistingSitemaps();
+      // console.log('Deleting existing sitemaps...');
+      // await clearExistingSitemaps();
+      await getExistingSitemapFiles();
     } else {
       console.log('Invalid choice. Exiting...');
     }
