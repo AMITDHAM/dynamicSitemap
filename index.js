@@ -404,7 +404,6 @@ const generateMissedSitemaps = async (indices) => {
           missingPages.push(i);
         }
       }
-      console.log(`Final missing pages for ${indexName}:`, missingPages);
 
       if (missingPages.length > 0) {
         console.log(`Generating missed sitemaps for index ${indexName}:`, missingPages);
@@ -430,8 +429,6 @@ const deleteOutdatedFiles = async (validFiles) => {
     return !validFiles.includes(file) &&
       !['public/linkup_postings_0.xml', 'public/adzuna_postings_0.xml', 'public/big_job_site_postings_0.xml', 'public/indeed_jobs_postings_0.xml','public/sitemap_Alljobs.xml', 'public/sitemap_index_counts.xml'].includes(file);
   });
-
-  console.log('Files to delete:', filesToDelete);
 
   for (const file of filesToDelete) {
     try {
@@ -463,6 +460,22 @@ const generateSitemapsAndCleanup = async (indices) => {
     }
   }
   await deleteOutdatedFiles(validFiles);
+};
+
+const generateSitemapsList = async (indices) => {
+  const pageSize = 5000;
+  const validFiles = [];
+
+  for (const indexName of indices) {
+    const totalPages = await fetchTotalPages(indexName, pageSize);
+
+    console.log(`Total pages for ${indexName}: ${totalPages}`);
+    for (let page = 1; page <= totalPages; page++) {
+      const fileName = `${indexName}_${page}.xml`;
+      validFiles.push(`${S3_PUBLIC_PATH}${fileName}`);
+      // await generateSitemapXml(indexName, page, pageSize);
+    }
+  }
 };
 
 const generateAllSitemaps = async (indices) => {
@@ -497,7 +510,7 @@ const rl = readline.createInterface({
 const promptUserForChoice = () => {
   return new Promise((resolve) => {
     rl.question(
-      'Choose an option:\n1. Generate all sitemaps (serial wise)\n2. Generate all sitemaps (range or specifics after 0)\n3. Generate only the alljobs sitemap and index data count sitemap index from existing files\n4. Generate missed sitemaps\n5. Cleanup outdated files\n6. Get all sitemaps number\nYour choice: ',
+      'Choose an option:\n1. Generate all sitemaps (serial wise)\n2. Generate all sitemaps (range or specifics after 0)\n3. Generate only the alljobs sitemap and index data count sitemap index from existing files\n4. Generate missed sitemaps\n5. Cleanup outdated files\n6. Get all sitemaps number\n7. Delete All sitemaps (disabled)\nYour choice: ',
       (choice) => {
         resolve(parseInt(choice, 10));
       }
@@ -554,9 +567,11 @@ const promptUserForStartingPage = () => {
       console.log('Generating sitemaps and cleaning up outdated files...');
       await generateSitemapsAndCleanup(indices);
     } else if (choice === 6) {
-      // console.log('Deleting existing sitemaps...');
+      console.log('Get all sitemaps list');
+      await generateSitemapsList(indices);
+    } else if (choice === 7) {
+      console.log('Deleting existing sitemaps... not alowed');
       // await clearExistingSitemaps();
-      await getExistingSitemapFiles();
     } else {
       console.log('Invalid choice. Exiting...');
     }
