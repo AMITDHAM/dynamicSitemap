@@ -108,7 +108,7 @@ const generateSitemapXml = async (indexName, pageNumber, pageSize) => {
       jobPostings.forEach((posting) => {
         const locValue = `https://www.jobtrees.com/postid/${posting._source.id}`;
         root.ele('url').ele('loc', locValue).up()
-          .ele('lastmod', getCurrentDateTime()).up()
+          .ele('lastmod', new Date().toISOString()).up()
           .ele('changefreq', 'daily').up()
           .ele('priority', 1.0).up();
       });
@@ -212,7 +212,7 @@ const generateMainSitemapXml = async (existingFiles) => {
     const cleanedFile = file.replace(/^public\//, '');
     const url = `https://www.jobtrees.com/api/sitemap/${cleanedFile}`;
     root.ele('url').ele('loc', url).up()
-      .ele('lastmod', getCurrentDateTime()).up()
+      .ele('lastmod', new Date().toISOString()).up()
       .ele('changefreq', 'daily').up()
       .ele('priority', 1.0).up();
   });
@@ -270,7 +270,7 @@ const generateIndexCountSitemap = async (indices) => {
       const locValue = `Index: ${indexName}, Total Postings: ${totalCount}, Sitemaps to Generate: ${sitemapCount}`;
 
       root.ele('url').ele('loc', locValue).up()
-        .ele('lastmod', getCurrentDateTime()).up()
+        .ele('lastmod', new Date().toISOString()).up()
         .ele('changefreq', 'daily').up()
         .ele('priority', 1.0).up();
     } catch (error) {
