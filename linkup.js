@@ -83,6 +83,7 @@ const generateSitemapXml = async (indexName, pageNumber, pageSize) => {
       query: { match_all: {} },
       from: (pageNumber - 1) * pageSize,
       size: pageSize,
+      _source: ["id"] 
     };
 
     const searchRequest = {
