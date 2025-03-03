@@ -426,25 +426,38 @@ const parsePageInput = (input, totalPages) => {
   return Array.from(pages).sort((a, b) => a - b);
 };
 
+// const generateAllSitemaps = async (indices, indicess) => {
+//   const pageSize = 5000;
+
+//   for (const indexName of indices) {
+//     const totalPages = await fetchTotalPages(indexName, pageSize);
+//     console.log(`Total pages for ${indexName}: ${totalPages}`);
+
+//     const userInput = await new Promise((resolve) => {
+//       rl.question(
+//         `Enter page numbers for ${indexName} (e.g., "1", "1-10", "5,10,20"): `,
+//         (input) => resolve(input)
+//       );
+//     });
+
+//     const pages = userInput === '0'
+//       ? Array.from({ length: totalPages }, (_, i) => i + 1) // All pages
+//       : parsePageInput(userInput, totalPages);
+
+//     for (const page of pages) {
+//       await generateSitemapXml(indexName, page, pageSize);
+//     }
+//     await generateMissedSitemaps(indices, indicess)
+//   }
+// };
+
 const generateAllSitemaps = async (indices, indicess) => {
   const pageSize = 5000;
-
   for (const indexName of indices) {
     const totalPages = await fetchTotalPages(indexName, pageSize);
     console.log(`Total pages for ${indexName}: ${totalPages}`);
 
-    const userInput = await new Promise((resolve) => {
-      rl.question(
-        `Enter page numbers for ${indexName} (e.g., "1", "1-10", "5,10,20"): `,
-        (input) => resolve(input)
-      );
-    });
-
-    const pages = userInput === '0'
-      ? Array.from({ length: totalPages }, (_, i) => i + 1) // All pages
-      : parsePageInput(userInput, totalPages);
-
-    for (const page of pages) {
+    for (let page = 1; page <= totalPages; page++) {
       await generateSitemapXml(indexName, page, pageSize);
     }
     await generateMissedSitemaps(indices, indicess)
@@ -460,6 +473,8 @@ const rl = readline.createInterface({
   try {
     const indices = [
       'indeed_jobs_postings',
+      'big_job_site_postings',
+      'adzuna_postings',
     ];
     const indicess = [
       'adzuna_postings',
