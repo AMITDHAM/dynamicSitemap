@@ -76,30 +76,49 @@ const getExistingSitemapFiles = async () => {
   }
 };
 
-const deleteSitemapFromS3 = async () => {
+const deleteOutdatedSitemaps = async () => {
   try {
     const existingFiles = await getExistingSitemapFiles();
     console.log('Existing files in S3:', existingFiles);
-    const filesToDelete = existingFiles.filter(file =>
-      file.startsWith('seo/pSEO_') || file.startsWith('seo/sitemap_index')
-    );
+    const datePattern = /pSEO_(\d{4}-\d{2}-\d{2})\.xml/;
+    const filesToDelete = [];
 
-    console.log('Files to delete:', filesToDelete);
+    // Filter files based on date
+    const datedFiles = existingFiles.filter(file => datePattern.test(file));
+    const filesWithDates = datedFiles.map(file => {
+      const match = file.match(datePattern);
+      return match ? { file, date: match[1] } : null;
+    }).filter(Boolean);
 
+    // Sort files by date (desc)
+    filesWithDates.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Keep the latest 2 days and prepare files to delete
+    const filesToKeep = filesWithDates.slice(0, 2);
+    const filesToDeleteSet = new Set(filesWithDates.slice(2).map(f => f.file));
+
+    // Prepare the list of files to delete
+    for (const file of existingFiles) {
+      if (filesToDeleteSet.has(file)) {
+        filesToDelete.push(file);
+      }
+    }
+
+    // Check and delete outdated files
     for (const file of filesToDelete) {
       console.log(`Deleting ${file} from S3...`);
       await s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: file }));
       console.log(`File deleted: ${file}`);
     }
+
   } catch (error) {
-    console.error('Error deleting files from S3:', error);
+    console.error('Error deleting outdated sitemaps from S3:', error);
   }
 };
 
+
 const generateSitemapXml = async () => {
   const MAX_URLS_PER_SITEMAP = 5000;
-  console.log('Deleting existing sitemaps before generating a new one...');
-  await deleteSitemapFromS3();
 
   console.log('Generating URLs...');
   const locations = getStaticLocations();
@@ -184,4 +203,7 @@ const uploadToS3 = async (fileName, fileContent) => {
   }
 };
 
-(async () => { await generateSitemapXml(); })();
+(async () => { 
+  await deleteOutdatedSitemaps();
+  await generateSitemapXml(); 
+})();

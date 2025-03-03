@@ -76,112 +76,134 @@ const getExistingSitemapFiles = async () => {
     }
 };
 
-const deleteSitemapFromS3 = async () => {
-    try {
-        const existingFiles = await getExistingSitemapFiles();
-        console.log('Existing files in S3:', existingFiles);
-        const filesToDelete = existingFiles.filter(file =>
-            file.startsWith('seo/pSEO_') || file.startsWith('seo/sitemap_index')
-        );
+const deleteOutdatedSitemaps = async () => {
+  try {
+    const existingFiles = await getExistingSitemapFiles();
+    console.log('Existing files in S3:', existingFiles);
+    const datePattern = /pSEO_(\d{4}-\d{2}-\d{2})\.xml/;
+    const filesToDelete = [];
 
-        console.log('Files to delete:', filesToDelete);
+    // Filter files based on date
+    const datedFiles = existingFiles.filter(file => datePattern.test(file));
+    const filesWithDates = datedFiles.map(file => {
+      const match = file.match(datePattern);
+      return match ? { file, date: match[1] } : null;
+    }).filter(Boolean);
 
-        for (const file of filesToDelete) {
-            console.log(`Deleting ${file} from S3...`);
-            await s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: file }));
-            console.log(`File deleted: ${file}`);
-        }
-    } catch (error) {
-        console.error('Error deleting files from S3:', error);
+    // Sort files by date (desc)
+    filesWithDates.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Keep the latest 2 days and prepare files to delete
+    const filesToKeep = filesWithDates.slice(0, 2);
+    const filesToDeleteSet = new Set(filesWithDates.slice(2).map(f => f.file));
+
+    // Prepare the list of files to delete
+    for (const file of existingFiles) {
+      if (filesToDeleteSet.has(file)) {
+        filesToDelete.push(file);
+      }
     }
+
+    // Check and delete outdated files
+    for (const file of filesToDelete) {
+      console.log(`Deleting ${file} from S3...`);
+      await s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: file }));
+      console.log(`File deleted: ${file}`);
+    }
+
+  } catch (error) {
+    console.error('Error deleting outdated sitemaps from S3:', error);
+  }
 };
 
+
 const generateSitemapXml = async () => {
-    const MAX_URLS_PER_SITEMAP = 5000;
-    console.log('Deleting existing sitemaps before generating a new one...');
-    await deleteSitemapFromS3();
+  const MAX_URLS_PER_SITEMAP = 5000;
 
-    console.log('Generating URLs...');
-    const locations = getStaticLocations();
-    const roles = await fetchRoles();
-    const urls = [];
-    for (const role of roles) {
-        for (const { city, state, stateAbbr } of locations) {
-            if (await checkJobExists(role, city, state)) {
-                urls.push(generateUrl(role, city, stateAbbr));
-            }
-        }
+  console.log('Generating URLs...');
+  const locations = getStaticLocations();
+  const roles = await fetchRoles();
+  const urls = [];
+  for (const role of roles) {
+    for (const { city, state, stateAbbr } of locations) {
+      if (await checkJobExists(role, city, state)) {
+        urls.push(generateUrl(role, city, stateAbbr));
+      }
     }
+  }
 
-    console.log(`Generated ${urls.length} URLs for the sitemap`);
+  console.log(`Generated ${urls.length} URLs for the sitemap`);
 
-    let sitemapIndex = 1;
-    let currentUrls = [];
-    let sitemapFiles = [];
-    for (const url of urls) {
-        if (currentUrls.length >= MAX_URLS_PER_SITEMAP) {
-            const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
-            await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
-            sitemapFiles.push(sitemapFileName);
-            currentUrls = [];
-            sitemapIndex++;
-        }
-        currentUrls.push(url);
+  let sitemapIndex = 1;
+  let currentUrls = [];
+  let sitemapFiles = [];
+  for (const url of urls) {
+    if (currentUrls.length >= MAX_URLS_PER_SITEMAP) {
+      const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
+      await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
+      sitemapFiles.push(sitemapFileName);
+      currentUrls = [];
+      sitemapIndex++;
     }
-    if (currentUrls.length > 0) {
-        const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
-        await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
-        sitemapFiles.push(sitemapFileName);
-    }
-    await uploadToS3('sitemap_index_pSEO.xml', generateSitemapIndex(sitemapFiles));
-    console.log('Sitemap generated and uploaded successfully.');
+    currentUrls.push(url);
+  }
+  if (currentUrls.length > 0) {
+    const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
+    await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
+    sitemapFiles.push(sitemapFileName);
+  }
+  await uploadToS3('sitemap_index_pSEO.xml', generateSitemapIndex(sitemapFiles));
+  console.log('Sitemap generated and uploaded successfully.');
 };
 
 const generateSitemapXmlContent = (urls) => {
-    const urlset = create('urlset', { version: '1.0', encoding: 'UTF-8' })
-        .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+  const urlset = create('urlset', { version: '1.0', encoding: 'UTF-8' })
+    .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
 
-    urls.forEach(url => {
-        urlset.ele('url')
-            .ele('loc', url).up()
-            .ele('lastmod', new Date().toISOString()).up()
-            .ele('changefreq', 'daily').up()
-            .ele('priority', '1.0').up();
-    });
+  urls.forEach(url => {
+    urlset.ele('url')
+      .ele('loc', url).up()
+      .ele('lastmod', new Date().toISOString()).up()
+      .ele('changefreq', 'daily').up()
+      .ele('priority', '1.0').up();
+  });
 
-    return urlset.end({ pretty: true });
+  return urlset.end({ pretty: true });
 };
 
 const generateSitemapIndex = (sitemapFiles) => {
-    const index = create('sitemapindex', { version: '1.0', encoding: 'UTF-8' })
-        .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+  const index = create('sitemapindex', { version: '1.0', encoding: 'UTF-8' })
+    .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
 
-    sitemapFiles.forEach(file => {
-        index.ele('sitemap')
-            .ele('loc', `https://www.jobtrees.com/api/sitemap_pSEO/${file}`).up()
-            .ele('lastmod', new Date().toISOString()).up()
-            .ele('changefreq', 'daily').up()
-            .ele('priority', '1.0').up();
-    });
+  sitemapFiles.forEach(file => {
+    index.ele('sitemap')
+      .ele('loc', `https://www.jobtrees.com/api/sitemap_pSEO/${file}`).up()
+      .ele('lastmod', new Date().toISOString()).up()
+      .ele('changefreq', 'daily').up()
+      .ele('priority', '1.0').up();
+  });
 
-    return index.end({ pretty: true });
+  return index.end({ pretty: true });
 };
 
 const uploadToS3 = async (fileName, fileContent) => {
-    try {
-        const fullFilePath = `${S3_PUBLIC_PATH}${fileName}`;
-        console.log(`Uploading ${fullFilePath} to S3...`);
-        await s3Client.send(new PutObjectCommand({
-            Bucket: S3_BUCKET,
-            Key: fullFilePath,
-            Body: fileContent,
-            ContentType: 'application/xml',
-            ACL: 'public-read'
-        }));
-        console.log(`File uploaded: ${fullFilePath}`);
-    } catch (error) {
-        console.error(`Error uploading ${fileName} to S3:`, error);
-    }
+  try {
+    const fullFilePath = `${S3_PUBLIC_PATH}${fileName}`;
+    console.log(`Uploading ${fullFilePath} to S3...`);
+    await s3Client.send(new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: fullFilePath,
+      Body: fileContent,
+      ContentType: 'application/xml',
+      ACL: 'public-read'
+    }));
+    console.log(`File uploaded: ${fullFilePath}`);
+  } catch (error) {
+    console.error(`Error uploading ${fileName} to S3:`, error);
+  }
 };
 
-(async () => { await generateSitemapXml(); })();
+(async () => { 
+  await deleteOutdatedSitemaps();
+  await generateSitemapXml(); 
+})();
