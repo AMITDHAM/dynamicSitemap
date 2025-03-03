@@ -343,14 +343,16 @@ const rl = readline.createInterface({
 (async () => {
   try {
     const indices = [
+      'jobtrees_postings',
       'indeed_jobs_postings',
       'big_job_site_postings',
       'adzuna_postings',
     ];
     const indicess = [
-      'adzuna_postings',
-      'big_job_site_postings',
+      'jobtrees_postings',
       'indeed_jobs_postings',
+      'big_job_site_postings',
+      'adzuna_postings',
     ];
     await generateSitemapsAndCleanup(indicess)
     await generateAllSitemaps(indices, indicess);

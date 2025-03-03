@@ -540,9 +540,10 @@ const promptUserForStartingPage = () => {
   try {
     const choice = await promptUserForChoice();
     const indices = [
-      'adzuna_postings',
-      'big_job_site_postings',
+      'jobtrees_postings',
       'indeed_jobs_postings',
+      'big_job_site_postings',
+      'adzuna_postings',
     ];
 
     if (choice === 1) {
