@@ -71,6 +71,10 @@ const formatCityName = (city) => city.toLowerCase().replace(/ /g, "-");
 const generateUrl = (role, city, stateAbbr) => `https://www.jobtrees.com/browse-careers/${formatRoleName(role)}-jobs-in-${formatCityName(city)}-${stateAbbr.toLowerCase()}`;
 
 
+// const fetchRoles = async () => {
+//   return ["software engineer", "product manager", "marketing specialist"];
+// };
+
 const fetchRoles = async () => {
   try {
       console.log('Fetching roles...');
