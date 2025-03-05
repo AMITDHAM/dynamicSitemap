@@ -1,9 +1,10 @@
-const { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-const aws4 = require('aws4');
-const readline = require('readline');
-const { create } = require('xmlbuilder');
-require('dotenv').config({ path: '.env.local' });
-// const fetch = require('node-fetch');
+import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import aws4 from 'aws4';
+import { create } from 'xmlbuilder';
+import dotenv from 'dotenv';
+import readline from 'readline';
+
+dotenv.config({ path: '.env.local' });
 const region = process.env.region;
 const credentials = {
   accessKeyId: process.env.accessKeyId,
@@ -52,7 +53,9 @@ const uploadToS3 = async (fileName, fileContent) => {
     const command = new PutObjectCommand(params);
     await s3Client.send(command);
     console.log(`File uploaded successfully: ${fileName}`);
-    await submitToIndexNow(`https://www.jobtrees.com/api/sitemap/${fileName}`);
+    if (fileName !== 'sitemap_Alljobs.xml') {
+      await submitToIndexNow(`https://www.jobtrees.com/api/sitemap/${fileName}`);
+    }
   } catch (error) {
     console.error(`Error uploading file to S3: ${error.message}`);
   }
@@ -94,7 +97,7 @@ const generateSitemapXml = async (indexName, pageNumber, pageSize) => {
       query: { match_all: {} },
       from: (pageNumber - 1) * pageSize,
       size: pageSize,
-      _source: ["id"] 
+      _source: ["id"]
     };
 
     const searchRequest = {
@@ -341,7 +344,7 @@ const generateMissedSitemaps = async (indices, indicess) => {
     }
   }
   const existingFiles = await getExistingSitemapFiles();
-  await generateIndexCountSitemap(indicess)
+  // await generateIndexCountSitemap(indicess)
   await generateMainSitemapXml(existingFiles);
 };
 
@@ -353,7 +356,7 @@ const submitToIndexNow = async (sitemapUrl) => {
 
   try {
     console.log(`\n🚀 Submitting ${sitemapUrl} to all IndexNow search engines...\n`);
-    
+
     const requestBody = {
       host: "www.jobtrees.com",
       key: INDEXNOW_API_KEY,
@@ -361,12 +364,12 @@ const submitToIndexNow = async (sitemapUrl) => {
       urlList: [sitemapUrl],
     };
 
-    console.log("📤 Request Details:");
-    console.log("🔹 Body:", JSON.stringify(requestBody, null, 2));
+    // console.log("📤 Request Details:");
+    // console.log("🔹 Body:", JSON.stringify(requestBody, null, 2));
 
     // Send requests in parallel to all search engines
     const requests = SEARCH_ENGINES.map(async (endpoint) => {
-      console.log(`\n🌍 Submitting to: ${endpoint}`);
+      // console.log(`\n🌍 Submitting to: ${endpoint}`);
 
       try {
         const response = await fetch(endpoint, {
@@ -375,13 +378,13 @@ const submitToIndexNow = async (sitemapUrl) => {
           body: JSON.stringify(requestBody),
         });
 
-        console.log("\n📥 Response Details:");
-        console.log("🔹 Search Engine:", endpoint);
-        console.log("🔹 Status:", response.status, response.statusText);
-        console.log("🔹 Headers:", Object.fromEntries(response.headers.entries()));
+        // console.log("\n📥 Response Details:");
+        // console.log("🔹 Search Engine:", endpoint);
+        // console.log("🔹 Status:", response.status, response.statusText);
+        // console.log("🔹 Headers:", Object.fromEntries(response.headers.entries()));
 
         const responseText = await response.text();
-        console.log("🔹 Response Body:", responseText || "[Empty Response]");
+        // console.log("🔹 Response Body:", responseText || "[Empty Response]");
 
         return { endpoint, success: response.ok };
       } catch (error) {

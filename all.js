@@ -1,9 +1,10 @@
-const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
-const { Upload } = require('@aws-sdk/lib-storage');
-const aws4 = require('aws4');
-const { create } = require('xmlbuilder2');
-require('dotenv').config({ path: '.env.local' });
+import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import aws4 from 'aws4';
+import { create } from 'xmlbuilder';
+import dotenv from 'dotenv';
+import Upload from '@aws-sdk/lib-storage';
 
+dotenv.config({ path: '.env.local' });
 const region = process.env.region;
 const credentials = {
   accessKeyId: process.env.accessKeyId,

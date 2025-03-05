@@ -1,8 +1,10 @@
-const { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-const aws4 = require('aws4');
-const readline = require('readline');
-const { create } = require('xmlbuilder');
-require('dotenv').config({ path: '.env.local' });
+import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import aws4 from 'aws4';
+import { create } from 'xmlbuilder';
+import dotenv from 'dotenv';
+import readline from 'readline';
+
+dotenv.config({ path: '.env.local' });
 const region = process.env.region;
 const credentials = {
   accessKeyId: process.env.accessKeyId,
@@ -15,18 +17,6 @@ const s3Client = new S3Client({
   region: region,
   credentials,
 });
-const getCurrentDateTime = () => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  const seconds = String(now.getSeconds()).padStart(2, '0');
-
-  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+00:00`;
-};
-
 
 const uploadToS3 = async (fileName, fileContent) => {
   console.log(`Uploading file: ${fileName} to S3...`);

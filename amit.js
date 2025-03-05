@@ -15,16 +15,7 @@ const OPEN_SEARCH_URL = process.env.OPEN_SEARCH_URL;
 const s3Client = new S3Client({ region, credentials });
 
 const getStaticLocations = () => [
-    { city: "Long Beach", state: "California", stateAbbr: "CA" },
-    { city: "Tucson", state: "Arizona", stateAbbr: "AZ" },
-    { city: "Fresno", state: "California", stateAbbr: "CA" },
-    { city: "Omaha", state: "Nebraska", stateAbbr: "NE" },
-    { city: "Raleigh", state: "North Carolina", stateAbbr: "NC" },
-    { city: "Oakland", state: "California", stateAbbr: "CA" },
-    { city: "Bakersfield", state: "California", stateAbbr: "CA" },
-    { city: "Tulsa", state: "Oklahoma", stateAbbr: "OK" },
-    { city: "Arlington", state: "Texas", stateAbbr: "TX" },
-    { city: "Milwaukee", state: "Wisconsin", stateAbbr: "WI" },
+   //
 ];
 const formatRoleName = (role) => role.toLowerCase().replace(/-/g, "--").replace(/ /g, "-");
 const formatCityName = (city) => city.toLowerCase().replace(/ /g, "-");
