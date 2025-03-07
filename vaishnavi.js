@@ -215,7 +215,7 @@ const generateSitemapXml = async () => {
   let sitemapFiles = [];
   for (const url of urls) {
     if (currentUrls.length >= MAX_URLS_PER_SITEMAP) {
-      const sitemapFileName = `pSEO_page_2${sitemapIndex}.xml`;
+      const sitemapFileName = `pSEO_page_two${sitemapIndex}.xml`;
       await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
       sitemapFiles.push(sitemapFileName);
       currentUrls = [];
@@ -224,7 +224,7 @@ const generateSitemapXml = async () => {
     currentUrls.push(url);
   }
   if (currentUrls.length > 0) {
-    const sitemapFileName = `pSEO_page_2${sitemapIndex}.xml`;
+    const sitemapFileName = `pSEO_page_two${sitemapIndex}.xml`;
     await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
     sitemapFiles.push(sitemapFileName);
   }
