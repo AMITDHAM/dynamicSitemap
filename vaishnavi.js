@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import pLimit from 'p-limit';
 
 dotenv.config({ path: '.env.local' });
-const limit = pLimit(5);
+const limit = pLimit(15);
 
 const region = process.env.region;
 const credentials = {
@@ -19,41 +19,54 @@ const OPEN_SEARCH_URL = process.env.OPEN_SEARCH_URL;
 const s3Client = new S3Client({ region, credentials });
 
 const getStaticLocations = () => [
-  { city: "New York", state: "New York", stateAbbr: "NY" },
-  { city: "Los Angeles", state: "California", stateAbbr: "CA" },
-  { city: "Chicago", state: "Illinois", stateAbbr: "IL" },
-  { city: "Houston", state: "Texas", stateAbbr: "TX" },
-  { city: "Phoenix", state: "Arizona", stateAbbr: "AZ" },
-  { city: "Philadelphia", state: "Pennsylvania", stateAbbr: "PA" },
-  { city: "San Antonio", state: "Texas", stateAbbr: "TX" },
-  { city: "San Diego", state: "California", stateAbbr: "CA" },
-  { city: "Dallas", state: "Texas", stateAbbr: "TX" },
-  { city: "Jacksonville", state: "Florida", stateAbbr: "FL" },
-  { city: "Long Beach", state: "California", stateAbbr: "CA" },
-  { city: "Tucson", state: "Arizona", stateAbbr: "AZ" },
-  { city: "Fresno", state: "California", stateAbbr: "CA" },
+  // { city: "detroit", state: "michigan", stateAbbr: "mi" },
+  // { city: "portland", state: "oregon", stateAbbr: "or" },
+  // { city: "louisville", state: "kentucky", stateAbbr: "ky" },
+  // { city: "memphis", state: "tennessee", stateAbbr: "tn" },
+  // { city: "baltimore", state: "maryland", stateAbbr: "md" },
+  // { city: "milwaukee", state: "wisconsin", stateAbbr: "wi" },
+  // { city: "albuquerque", state: "new mexico", stateAbbr: "nm" },
+  // { city: "tucson", state: "arizona", stateAbbr: "az" },
+  // { city: "fresno", state: "california", stateAbbr: "ca" },
+  // { city: "sacramento", state: "california", stateAbbr: "ca" },
+  // { city: "mesa", state: "arizona", stateAbbr: "az" },
+  // { city: "atlanta", state: "georgia", stateAbbr: "ga" },
+  // { city: "kansas city", state: "missouri", stateAbbr: "mo" },
+  // { city: "colorado springs", state: "colorado", stateAbbr: "co" },
+  // { city: "omaha", state: "nebraska", stateAbbr: "ne" },
+  // { city: "raleigh", state: "north carolina", stateAbbr: "nc" },
+  // { city: "miami", state: "florida", stateAbbr: "fl" },
+  // { city: "virginia beach", state: "virginia", stateAbbr: "va" },
+  // { city: "long beach", state: "california", stateAbbr: "ca" },
+  // { city: "oakland", state: "california", stateAbbr: "ca" },
+  // { city: "minneapolis", state: "minnesota", stateAbbr: "mn" },
+  // { city: "bakersfield", state: "california", stateAbbr: "ca" },
+  // { city: "tulsa", state: "oklahoma", stateAbbr: "ok" },
+  // { city: "tampa", state: "florida", stateAbbr: "fl" },
+  { city: "arlington", state: "texas", stateAbbr: "tx" },
 ];
+
 const formatRoleName = (role) => role.toLowerCase().replace(/-/g, "--").replace(/ /g, "-");
 const formatCityName = (city) => city.toLowerCase().replace(/ /g, "-");
 const generateUrl = (role, city, stateAbbr) => `https://www.jobtrees.com/browse-careers/${formatRoleName(role)}-jobs-in-${formatCityName(city)}-${stateAbbr.toLowerCase()}`;
 
 
-// const fetchRoles = async () => {
-//   return ["software engineer", "product manager", "marketing specialist"];
-// };
-
 const fetchRoles = async () => {
-  try {
-    console.log('Fetching roles...');
-    const response = await fetch('https://api.jobtrees.com/roles/roleList');
-    const data = await response.json();
-    console.log('Roles fetched successfully:', data);
-    return data;
-  } catch (error) {
-    console.error('Error fetching roles:', error);
-    return [];
-  }
+  return ["software engineer", "product manager", "marketing specialist"];
 };
+
+// const fetchRoles = async () => {
+//   try {
+//     console.log('Fetching roles...');
+//     const response = await fetch('https://api.jobtrees.com/roles/roleList');
+//     const data = await response.json();
+//     console.log('Roles fetched successfully:', data);
+//     return data;
+//   } catch (error) {
+//     console.error('Error fetching roles:', error);
+//     return [];
+//   }
+// };
 
 const checkJobExists = async (role, city, state) => {
   console.log(`Checking if job exists for ${role} in ${city}, ${state}...`);
@@ -64,7 +77,7 @@ const checkJobExists = async (role, city, state) => {
       query: {
         bool: {
           must: [
-            { terms: { "jobTreesTitle.keyword": role.toLowerCase() } },
+            { terms: { "jobTreesTitle.keyword": [role.toLowerCase()] } },
             { term: { "city.keyword": city.toLowerCase() } },
             { term: { "state.keyword": state.toLowerCase().trim() } },
           ],
@@ -85,22 +98,38 @@ const checkJobExists = async (role, city, state) => {
 
     aws4.sign(searchRequest, credentials);
 
+    // console.log(`\n🔍 Querying index: "${indexName}" with request body:`, JSON.stringify(searchRequestBody, null, 2));
+
     try {
       const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
         method: searchRequest.method,
         headers: searchRequest.headers,
         body: searchRequest.body,
       });
+
       const searchResponseBody = await searchResponse.json();
-      return searchResponseBody.hits?.total?.value > 0;
+      // console.log(`📌 Response from "${indexName}":`, JSON.stringify(searchResponseBody, null, 2));
+
+      const jobCount = searchResponseBody.hits?.total?.value || 0;
+      console.log(`✅ Found ${jobCount} jobs for "${role}" in "${city}, ${state}" from "${indexName}"`);
+
+      return jobCount > 0;
     } catch (error) {
-      console.error(`Error checking jobs for ${role} in ${city}, ${state}:`, error);
+      console.error(`❌ Error checking jobs in index "${indexName}" for "${role}" in "${city}, ${state}":`, error);
       return false;
     }
   });
 
   const results = await Promise.all(searchRequests);
-  return results.some(result => result); // If any index has a job, return true
+  const jobExists = results.some(result => result);
+
+  if (jobExists) {
+    console.log(`✅ Job exists for "${role}" in "${city}, ${state}" ✅`);
+  } else {
+    console.log(`🚫 No job found for "${role}" in "${city}, ${state}" 🚫`);
+  }
+
+  return jobExists;
 };
 
 
@@ -176,17 +205,17 @@ const generateSitemapXml = async () => {
       })
     )
   );
-  
+
   await Promise.all(jobCheckPromises);
   console.log(`Generated ${urls.length} URLs for the sitemap`);
-  
+
 
   let sitemapIndex = 1;
   let currentUrls = [];
   let sitemapFiles = [];
   for (const url of urls) {
     if (currentUrls.length >= MAX_URLS_PER_SITEMAP) {
-      const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
+      const sitemapFileName = `pSEO_page_2${sitemapIndex}.xml`;
       await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
       sitemapFiles.push(sitemapFileName);
       currentUrls = [];
@@ -195,11 +224,11 @@ const generateSitemapXml = async () => {
     currentUrls.push(url);
   }
   if (currentUrls.length > 0) {
-    const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
+    const sitemapFileName = `pSEO_page_2${sitemapIndex}.xml`;
     await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
     sitemapFiles.push(sitemapFileName);
   }
-  await uploadToS3('sitemap_index_pSEO.xml', generateSitemapIndex(sitemapFiles));
+  await uploadToS3('sitemap_index_pSEO.xml', await generateSitemapIndex(sitemapFiles));
   console.log('Sitemap generated and uploaded successfully.');
 };
 
@@ -218,37 +247,68 @@ const generateSitemapXmlContent = (urls) => {
   return urlset.end({ pretty: true });
 };
 
-const generateSitemapIndex = (sitemapFiles) => {
-  const index = create('sitemapindex', { version: '1.0', encoding: 'UTF-8' })
-    .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+const generateSitemapIndex = async (newSitemapFiles) => {
+  try {
+    // Fetch existing sitemap files from S3
+    let existingFiles = await getExistingSitemapFiles();
 
-  sitemapFiles.forEach(file => {
-    index.ele('sitemap')
-      .ele('loc', `https://www.jobtrees.com/api/sitemap_pSEO/${file}`).up()
-      .ele('lastmod', new Date().toISOString()).up()
-      .ele('changefreq', 'daily').up()
-      .ele('priority', '1.0').up();
-  });
+    // 🚨 Remove "seo/" prefix and filter out "sitemap_index_pSEO.xml"
+    existingFiles = existingFiles
+      .map(file => file.replace(/^seo\//, '')) // Remove "seo/" prefix
+      .filter(file => file !== 'sitemap_index_pSEO.xml');
 
-  return index.end({ pretty: true });
+    // Filter only XML sitemap files (avoiding any unrelated files)
+    const datePattern = /pSEO_.*\.xml$/;
+    let allSitemaps = existingFiles.filter(file => datePattern.test(file));
+
+    // Merge old sitemaps with new ones (avoiding duplicates)
+    let uniqueSitemapFiles = Array.from(new Set([...allSitemaps, ...newSitemapFiles]));
+
+    console.log(`📌 Total sitemaps included in index: ${uniqueSitemapFiles.length}`);
+
+    // Generate sitemap index XML
+    const index = create('urlset', { version: '1.0', encoding: 'UTF-8' })
+      .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+
+    uniqueSitemapFiles.forEach(file => {
+      index.ele('url')
+        .ele('loc', `https://www.jobtrees.com/api/sitemap_pSEO/${file}`).up() // ✅ Now correct
+        .ele('lastmod', new Date().toISOString()).up()
+        .ele('changefreq', 'daily').up()
+        .ele('priority', '1.0').up();
+    });
+
+    return index.end({ pretty: true });
+
+  } catch (error) {
+    console.error('❌ Error generating sitemap index:', error);
+    return null;
+  }
 };
+
 
 const uploadToS3 = async (fileName, fileContent) => {
   try {
     const fullFilePath = `${S3_PUBLIC_PATH}${fileName}`;
     console.log(`Uploading ${fullFilePath} to S3...`);
+
+    // Convert fileContent to a Buffer (fix for AWS hashing issue)
+    const fileBuffer = Buffer.from(fileContent, 'utf-8');
+
     await s3Client.send(new PutObjectCommand({
       Bucket: S3_BUCKET,
       Key: fullFilePath,
-      Body: fileContent,
+      Body: fileBuffer,  // Ensure proper format
       ContentType: 'application/xml',
       ACL: 'public-read'
     }));
-    console.log(`File uploaded: ${fullFilePath}`);
+
+    console.log(`✅ File uploaded successfully: ${fullFilePath}`);
   } catch (error) {
-    console.error(`Error uploading ${fileName} to S3:`, error);
+    console.error(`❌ Error uploading ${fileName} to S3:`, error);
   }
 };
+
 
 (async () => {
   await deleteOutdatedSitemaps();

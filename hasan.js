@@ -2,75 +2,102 @@ import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand }
 import aws4 from 'aws4';
 import { create } from 'xmlbuilder';
 import dotenv from 'dotenv';
-import pLimit from 'p-limit';
+import readline from 'readline';
 
 dotenv.config({ path: '.env.local' });
-const limit = pLimit(5);
-
 const region = process.env.region;
 const credentials = {
   accessKeyId: process.env.accessKeyId,
   secretAccessKey: process.env.secretAccessKey,
 };
 const S3_BUCKET = process.env.S3_BUCKET;
-const S3_PUBLIC_PATH = process.env.S3_PUBLIC_PATH2;
+const S3_PUBLIC_PATH = process.env.S3_PUBLIC_PATH;
 const OPEN_SEARCH_URL = process.env.OPEN_SEARCH_URL;
-
-const s3Client = new S3Client({ region, credentials });
-
-const getStaticLocations = () => [
-  { city: "Austin", state: "Texas", stateAbbr: "TX" },
-  { city: "Fort Worth", state: "Texas", stateAbbr: "TX" },
-  { city: "San Jose", state: "California", stateAbbr: "CA" },
-  { city: "Columbus", state: "Ohio", stateAbbr: "OH" },
-  { city: "Charlotte", state: "North Carolina", stateAbbr: "NC" },
-  { city: "Indianapolis", state: "Indiana", stateAbbr: "IN" },
-  { city: "San Francisco", state: "California", stateAbbr: "CA" },
-  { city: "Seattle", state: "Washington", stateAbbr: "WA" },
-  { city: "Denver", state: "Colorado", stateAbbr: "CO" },
-  { city: "Oklahoma City", state: "Oklahoma", stateAbbr: "OK" },
-  { city: "Bakersfield", state: "California", stateAbbr: "CA" },
-  { city: "Tulsa", state: "Oklahoma", stateAbbr: "OK" },
-  { city: "Arlington", state: "Texas", stateAbbr: "TX" },
+const s3Client = new S3Client({
+  region: region,
+  credentials,
+});
+const INDEXNOW_API_KEY = process.env.INDEXNOW_API_KEY; // Add your API key in .env.local
+const SEARCH_ENGINES = [
+  "https://api.indexnow.org/indexnow",
+  "https://www.bing.com/indexnow",
+  "https://searchadvisor.naver.com/indexnow",
+  "https://search.seznam.cz/indexnow",
+  "https://yandex.com/indexnow",
+  "https://indexnow.yep.com/indexnow"
 ];
-const formatRoleName = (role) => role.toLowerCase().replace(/-/g, "--").replace(/ /g, "-");
-const formatCityName = (city) => city.toLowerCase().replace(/ /g, "-");
-const generateUrl = (role, city, stateAbbr) => `https://www.jobtrees.com/browse-careers/${formatRoleName(role)}-jobs-in-${formatCityName(city)}-${stateAbbr.toLowerCase()}`;
+const getCurrentDateTime = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+00:00`;
+};
 
 
-// const fetchRoles = async () => {
-//   return ["software engineer", "product manager", "marketing specialist"];
-// };
+const uploadToS3 = async (fileName, fileContent) => {
+  console.log(`Uploading file: ${fileName} to S3...`);
+  const params = {
+    Bucket: S3_BUCKET,
+    Key: `${S3_PUBLIC_PATH}${fileName}`,
+    Body: fileContent,
+    ContentType: 'application/xml',
+    ACL: 'public-read',
+  };
 
-const fetchRoles = async () => {
   try {
-    console.log('Fetching roles...');
-    const response = await fetch('https://api.jobtrees.com/roles/roleList');
-    const data = await response.json();
-    console.log('Roles fetched successfully:', data);
-    return data;
+    const command = new PutObjectCommand(params);
+    await s3Client.send(command);
+    console.log(`File uploaded successfully: ${fileName}`);
+    if (fileName !== 'sitemap_Alljobs.xml') {
+      await submitToIndexNow(`https://www.jobtrees.com/api/sitemap/${fileName}`);
+    }
   } catch (error) {
-    console.error('Error fetching roles:', error);
-    return [];
+    console.error(`Error uploading file to S3: ${error.message}`);
   }
 };
 
-const checkJobExists = async (role, city, state) => {
-  console.log(`Checking if job exists for ${role} in ${city}, ${state}...`);
-  const indices = ['adzuna_postings', 'big_job_site_postings', 'indeed_jobs_postings', 'jobtrees_postings', 'greenhouse_postings'];
+const fetchTotalPages = async (indexName, pageSize) => {
+  try {
+    const requestBody = { query: { match_all: {} } };
+    const countRequest = {
+      host: OPEN_SEARCH_URL,
+      path: `/${indexName}/_count`,
+      service: 'es',
+      region,
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+      headers: { 'Content-Type': 'application/json' },
+    };
 
-  const searchRequests = indices.map(async (indexName) => {
+    aws4.sign(countRequest, credentials);
+    const countResponse = await fetch(`https://${countRequest.host}${countRequest.path}`, {
+      method: countRequest.method,
+      headers: countRequest.headers,
+      body: countRequest.body,
+    });
+    const countResponseBody = await countResponse.json();
+    const totalCount = countResponseBody.count;
+
+    return Math.ceil(totalCount / pageSize);
+  } catch (error) {
+    console.error(`Error fetching total pages for index ${indexName}:`, error.message);
+    return 0;
+  }
+};
+
+const generateSitemapXml = async (indexName, pageNumber, pageSize) => {
+  try {
+    console.log(`Generating sitemap for index: ${indexName}, page: ${pageNumber}`);
     const searchRequestBody = {
-      query: {
-        bool: {
-          must: [
-            { terms: { "jobTreesTitle.keyword": role.toLowerCase() } },
-            { term: { "city.keyword": city.toLowerCase() } },
-            { term: { "state.keyword": state.toLowerCase().trim() } },
-          ],
-        },
-      },
-      size: 1,
+      query: { match_all: {} },
+      from: (pageNumber - 1) * pageSize,
+      size: pageSize,
+      _source: ["id"]
     };
 
     const searchRequest = {
@@ -84,173 +111,386 @@ const checkJobExists = async (role, city, state) => {
     };
 
     aws4.sign(searchRequest, credentials);
+    const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
+      method: searchRequest.method,
+      headers: searchRequest.headers,
+      body: searchRequest.body,
+    });
 
-    try {
-      const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
-        method: searchRequest.method,
-        headers: searchRequest.headers,
-        body: searchRequest.body,
+    const searchResponseBody = await searchResponse.json();
+    const jobPostings = (searchResponseBody.hits && searchResponseBody.hits.hits) || [];
+
+    if (jobPostings.length > 0) {
+      const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+      jobPostings.forEach((posting) => {
+        const locValue = `https://www.jobtrees.com/postid/${posting._source.id}`;
+        root.ele('url').ele('loc', locValue).up()
+          .ele('lastmod', new Date().toISOString()).up()
+          .ele('changefreq', 'daily').up()
+          .ele('priority', 1.0).up();
       });
-      const searchResponseBody = await searchResponse.json();
-      return searchResponseBody.hits?.total?.value > 0;
-    } catch (error) {
-      console.error(`Error checking jobs for ${role} in ${city}, ${state}:`, error);
-      return false;
-    }
-  });
 
-  const results = await Promise.all(searchRequests);
-  return results.some(result => result); // If any index has a job, return true
+      const fileName = `${indexName}_${pageNumber}.xml`;
+      await uploadToS3(fileName, root.end({ pretty: true }));
+      console.log(`Sitemap ${fileName} generated and uploaded.`);
+    } else {
+      console.log(`No job postings found for page ${pageNumber} of index ${indexName}.`);
+    }
+  } catch (error) {
+    console.error(`Error generating sitemap for page ${pageNumber} of index ${indexName}:`, error.message);
+  }
 };
 
+const deleteOutdatedFiles = async (validFiles) => {
+  const existingFiles = await getExistingSitemapFiles();
+  const filesToDelete = existingFiles.filter((file) => {
+    return !validFiles.includes(file) &&
+      !['public/sitemap_Alljobs.xml', 'public/sitemap_index_counts.xml'].includes(file);
+  });
+
+  for (const file of filesToDelete) {
+    try {
+      const deleteParams = {
+        Bucket: S3_BUCKET,
+        Key: file,
+      };
+
+      await s3Client.send(new DeleteObjectCommand(deleteParams));
+      console.log(`Deleted outdated file: ${file}`);
+    } catch (error) {
+      console.error(`Error deleting file ${file}:`, error.message);
+    }
+  }
+};
+
+const generateSitemapsAndCleanup = async (indices) => {
+  const pageSize = 5000;
+  const validFiles = [];
+
+  for (const indexName of indices) {
+    const totalPages = await fetchTotalPages(indexName, pageSize);
+
+    console.log(`Total pages for ${indexName}: ${totalPages}`);
+    for (let page = 1; page <= totalPages; page++) {
+      const fileName = `${indexName}_${page}.xml`;
+      validFiles.push(`${S3_PUBLIC_PATH}${fileName}`);
+      // await generateSitemapXml(indexName, page, pageSize);
+    }
+  }
+  await deleteOutdatedFiles(validFiles);
+};
 
 const getExistingSitemapFiles = async () => {
+  let isTruncated = true;
+  let continuationToken = null;
+  const files = [];
+
   try {
-    console.log('Fetching existing sitemaps...');
-    const response = await s3Client.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: S3_PUBLIC_PATH }));
-    return response.Contents ? response.Contents.map(item => item.Key) : [];
+    while (isTruncated) {
+      const listParams = {
+        Bucket: S3_BUCKET,
+        Prefix: S3_PUBLIC_PATH,
+        ContinuationToken: continuationToken,
+      };
+
+      const response = await s3Client.send(new ListObjectsV2Command(listParams));
+      if (response.Contents) {
+        files.push(...response.Contents.map((item) => item.Key));
+      }
+
+      isTruncated = response.IsTruncated;
+      continuationToken = response.NextContinuationToken;
+    }
+
+    return files.filter((file) => file.endsWith('.xml'));
   } catch (error) {
-    console.error('Error fetching existing sitemaps:', error);
+    console.error('Error fetching files from S3:', error.message);
     return [];
   }
 };
 
-const deleteOutdatedSitemaps = async () => {
+const generateMainSitemapXml = async (existingFiles) => {
+  const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+  const excludedFiles = [
+    'public/sitemap_Alljobs.xml',
+    'public/sitemap_index_counts.xml'
+  ];
+
+  const filteredFiles = existingFiles.filter(file => !excludedFiles.includes(file));
+
+  filteredFiles.sort((a, b) => {
+    const numA = parseInt(a.replace(/\D/g, ''), 10);
+    const numB = parseInt(b.replace(/\D/g, ''), 10);
+    return numA - numB;
+  });
+
+  filteredFiles.forEach((file) => {
+    // Remove "public/" prefix to construct the correct URL
+    const cleanedFile = file.replace(/^public\//, '');
+    const url = `https://www.jobtrees.com/api/sitemap/${cleanedFile}`;
+    root.ele('url').ele('loc', url).up()
+      .ele('lastmod', new Date().toISOString()).up()
+      .ele('changefreq', 'daily').up()
+      .ele('priority', 1.0).up();
+  });
+
+  const xmlString = root.end({ pretty: true });
+  const fileName = 'sitemap_Alljobs.xml';
+
+  await uploadToS3(fileName, xmlString);
+  console.log('Main sitemap index generated and uploaded.');
+};
+const generateIndexCountSitemap = async (indices) => {
+  const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+  const pageSize = 5000; // Number of postings per sitemap
+
+  for (const indexName of indices) {
+    try {
+      const requestBody = {
+        query: { match_all: {} },
+      };
+
+      const request = {
+        host: OPEN_SEARCH_URL,
+        path: `/${indexName}/_count`,
+        service: 'es',
+        region: region,
+        method: 'POST',
+        body: JSON.stringify(requestBody),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      };
+
+      aws4.sign(request, {
+        accessKeyId: credentials.accessKeyId,
+        secretAccessKey: credentials.secretAccessKey,
+      });
+
+      const response = await fetch(`https://${request.host}${request.path}`, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      });
+      const responseBody = await response.json();
+      const totalCount = responseBody.count;
+
+      if (!totalCount) {
+        throw new Error(`Unable to fetch count from index ${indexName}`);
+      }
+
+      const sitemapCount = Math.ceil(totalCount / pageSize);
+
+      // Include the summary in the XML structure
+      const locValue = `Index: ${indexName}, Total Postings: ${totalCount}, Sitemaps to Generate: ${sitemapCount}`;
+
+      root.ele('url').ele('loc', locValue).up()
+        .ele('lastmod', new Date().toISOString()).up()
+        .ele('changefreq', 'daily').up()
+        .ele('priority', 1.0).up();
+    } catch (error) {
+      console.error(`Error fetching count for index ${indexName}:`, error.message);
+    }
+  }
+
+  const xmlString = root.end({ pretty: true });
+  const fileName = 'sitemap_index_counts.xml';
+
+  await uploadToS3(fileName, xmlString);
+  const fileUrl = `https://www.jobtrees.com/api/sitemap/${fileName}`;
+  console.log(`Index count sitemap generated and uploaded. Accessible at: ${fileUrl}`);
+};
+
+const generateMissedSitemaps = async (indices, indicess) => {
+  const pageSize = 5000;
+  console.log('missed sitemaps generating')
+  for (const indexName of indices) {
+    try {
+      // Fetch existing sitemap files from S3
+      const existingFiles = await getExistingSitemapFiles();
+      const existingPages = existingFiles
+        .filter((file) => file.startsWith(`${S3_PUBLIC_PATH}${indexName}_`))
+        .map((file) => {
+          const match = file.match(/_(\d+)\.xml$/);
+          return match ? parseInt(match[1], 10) : null;
+        })
+        .filter((num) => num !== null);
+
+      // Get total pages based on total documents in the index
+      const totalPages = await fetchTotalPages(indexName, pageSize);
+
+      // Identify missing pages
+      const missingPages = [];
+      for (let i = 1; i <= totalPages; i++) {
+        if (!existingPages.includes(i)) {
+          missingPages.push(i);
+        }
+      }
+
+      if (missingPages.length > 0) {
+        console.log(`Generating missed sitemaps for index ${indexName}:`, missingPages);
+
+        // Iterate only through the missingPages array
+        for (const page of missingPages) {
+          console.log(`Processing missing page: ${page}`); // Debug log
+          await generateSitemapXml(indexName, page, pageSize, totalPages);
+        }
+
+      } else {
+        console.log(`No missing sitemaps found for index ${indexName}.`);
+      }
+    } catch (error) {
+      console.error(`Error processing index ${indexName}:`, error.message);
+    }
+  }
+  const existingFiles = await getExistingSitemapFiles();
+  // await generateIndexCountSitemap(indicess)
+  await generateMainSitemapXml(existingFiles);
+};
+
+const submitToIndexNow = async (sitemapUrl) => {
+  if (!INDEXNOW_API_KEY) {
+    console.error("❌ INDEXNOW_API_KEY is missing. Add it to your environment variables.");
+    return;
+  }
+
   try {
-    const existingFiles = await getExistingSitemapFiles();
-    console.log('Existing files in S3:', existingFiles);
-    const datePattern = /pSEO_(\d{4}-\d{2}-\d{2})\.xml/;
-    const filesToDelete = [];
+    console.log(`\n🚀 Submitting ${sitemapUrl} to all IndexNow search engines...\n`);
 
-    // Filter files based on date
-    const datedFiles = existingFiles.filter(file => datePattern.test(file));
-    const filesWithDates = datedFiles.map(file => {
-      const match = file.match(datePattern);
-      return match ? { file, date: match[1] } : null;
-    }).filter(Boolean);
+    const requestBody = {
+      host: "www.jobtrees.com",
+      key: INDEXNOW_API_KEY,
+      keyLocation: `https://www.jobtrees.com/${INDEXNOW_API_KEY}.txt`,
+      urlList: [sitemapUrl],
+    };
 
-    // Sort files by date (desc)
-    filesWithDates.sort((a, b) => new Date(b.date) - new Date(a.date));
+    // console.log("📤 Request Details:");
+    // console.log("🔹 Body:", JSON.stringify(requestBody, null, 2));
 
-    // Keep the latest 2 days and prepare files to delete
-    const filesToKeep = filesWithDates.slice(0, 2);
-    const filesToDeleteSet = new Set(filesWithDates.slice(2).map(f => f.file));
+    // Send requests in parallel to all search engines
+    const requests = SEARCH_ENGINES.map(async (endpoint) => {
+      // console.log(`\n🌍 Submitting to: ${endpoint}`);
 
-    // Prepare the list of files to delete
-    for (const file of existingFiles) {
-      if (filesToDeleteSet.has(file)) {
-        filesToDelete.push(file);
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
+
+        // console.log("\n📥 Response Details:");
+        // console.log("🔹 Search Engine:", endpoint);
+        // console.log("🔹 Status:", response.status, response.statusText);
+        // console.log("🔹 Headers:", Object.fromEntries(response.headers.entries()));
+
+        const responseText = await response.text();
+        // console.log("🔹 Response Body:", responseText || "[Empty Response]");
+
+        return { endpoint, success: response.ok };
+      } catch (error) {
+        console.error(`❌ Error submitting to ${endpoint}:`, error.message);
+        return { endpoint, success: false };
+      }
+    });
+
+    // Wait for all requests to complete
+    const results = await Promise.all(requests);
+
+    // Summary of successful and failed submissions
+    const successfulSubmissions = results.filter((r) => r.success);
+    console.log(`\n✅ Successfully submitted to ${successfulSubmissions.length}/${SEARCH_ENGINES.length} search engines.`);
+
+    if (successfulSubmissions.length !== SEARCH_ENGINES.length) {
+      console.warn("⚠️ Some search engines failed to receive the submission.");
+    }
+  } catch (error) {
+    console.error(`🚨 Unexpected error submitting to IndexNow:`, error);
+  }
+};
+
+const parsePageInput = (input, totalPages) => {
+  const pages = new Set();
+
+  const parts = input.split(',');
+  for (const part of parts) {
+    if (part.includes('-')) {
+      const [start, end] = part.split('-').map(Number);
+      for (let i = Math.max(1, start); i <= Math.min(end, totalPages); i++) {
+        pages.add(i);
+      }
+    } else {
+      const page = parseInt(part, 10);
+      if (page >= 1 && page <= totalPages) {
+        pages.add(page);
       }
     }
+  }
 
-    // Check and delete outdated files
-    for (const file of filesToDelete) {
-      console.log(`Deleting ${file} from S3...`);
-      await s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: file }));
-      console.log(`File deleted: ${file}`);
+  return Array.from(pages).sort((a, b) => a - b);
+};
+
+// const generateAllSitemaps = async (indices, indicess) => {
+//   const pageSize = 5000;
+
+//   for (const indexName of indices) {
+//     const totalPages = await fetchTotalPages(indexName, pageSize);
+//     console.log(`Total pages for ${indexName}: ${totalPages}`);
+
+//     const userInput = await new Promise((resolve) => {
+//       rl.question(
+//         `Enter page numbers for ${indexName} (e.g., "1", "1-10", "5,10,20"): `,
+//         (input) => resolve(input)
+//       );
+//     });
+
+//     const pages = userInput === '0'
+//       ? Array.from({ length: totalPages }, (_, i) => i + 1) // All pages
+//       : parsePageInput(userInput, totalPages);
+
+//     for (const page of pages) {
+//       await generateSitemapXml(indexName, page, pageSize);
+//     }
+//     await generateMissedSitemaps(indices, indicess)
+//   }
+// };
+
+const generateAllSitemaps = async (indices, indicess) => {
+  const pageSize = 5000;
+  for (const indexName of indices) {
+    const totalPages = await fetchTotalPages(indexName, pageSize);
+    console.log(`Total pages for ${indexName}: ${totalPages}`);
+
+    for (let page = 1; page <= totalPages; page++) {
+      await generateSitemapXml(indexName, page, pageSize);
     }
-
-  } catch (error) {
-    console.error('Error deleting outdated sitemaps from S3:', error);
+    await generateMissedSitemaps(indices, indicess)
   }
 };
 
-const checkJobExistsThrottled = async (role, city, state) => {
-  return limit(() => checkJobExists(role, city, state));
-};
-
-
-const generateSitemapXml = async () => {
-  const MAX_URLS_PER_SITEMAP = 5000;
-
-  console.log('Generating URLs...');
-  const locations = getStaticLocations();
-  const roles = await fetchRoles();
-  const urls = [];
-  const jobCheckPromises = roles.flatMap(role =>
-    locations.map(({ city, state, stateAbbr }) =>
-      checkJobExistsThrottled(role, city, state).then((exists) => {
-        if (exists) {
-          urls.push(generateUrl(role, city, stateAbbr));
-        }
-      })
-    )
-  );
-  
-  await Promise.all(jobCheckPromises);
-  console.log(`Generated ${urls.length} URLs for the sitemap`);
-  
-
-  let sitemapIndex = 1;
-  let currentUrls = [];
-  let sitemapFiles = [];
-  for (const url of urls) {
-    if (currentUrls.length >= MAX_URLS_PER_SITEMAP) {
-      const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
-      await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
-      sitemapFiles.push(sitemapFileName);
-      currentUrls = [];
-      sitemapIndex++;
-    }
-    currentUrls.push(url);
-  }
-  if (currentUrls.length > 0) {
-    const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
-    await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
-    sitemapFiles.push(sitemapFileName);
-  }
-  await uploadToS3('sitemap_index_pSEO.xml', generateSitemapIndex(sitemapFiles));
-  console.log('Sitemap generated and uploaded successfully.');
-};
-
-const generateSitemapXmlContent = (urls) => {
-  const urlset = create('urlset', { version: '1.0', encoding: 'UTF-8' })
-    .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
-
-  urls.forEach(url => {
-    urlset.ele('url')
-      .ele('loc', url).up()
-      .ele('lastmod', new Date().toISOString()).up()
-      .ele('changefreq', 'daily').up()
-      .ele('priority', '1.0').up();
-  });
-
-  return urlset.end({ pretty: true });
-};
-
-const generateSitemapIndex = (sitemapFiles) => {
-  const index = create('sitemapindex', { version: '1.0', encoding: 'UTF-8' })
-    .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
-
-  sitemapFiles.forEach(file => {
-    index.ele('sitemap')
-      .ele('loc', `https://www.jobtrees.com/api/sitemap_pSEO/${file}`).up()
-      .ele('lastmod', new Date().toISOString()).up()
-      .ele('changefreq', 'daily').up()
-      .ele('priority', '1.0').up();
-  });
-
-  return index.end({ pretty: true });
-};
-
-const uploadToS3 = async (fileName, fileContent) => {
-  try {
-    const fullFilePath = `${S3_PUBLIC_PATH}${fileName}`;
-    console.log(`Uploading ${fullFilePath} to S3...`);
-    await s3Client.send(new PutObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: fullFilePath,
-      Body: fileContent,
-      ContentType: 'application/xml',
-      ACL: 'public-read'
-    }));
-    console.log(`File uploaded: ${fullFilePath}`);
-  } catch (error) {
-    console.error(`Error uploading ${fileName} to S3:`, error);
-  }
-};
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
 
 (async () => {
-  await deleteOutdatedSitemaps();
-  await generateSitemapXml();
+  try {
+    const indices = [
+      'jobtrees_postings',
+      'indeed_jobs_postings',
+      'big_job_site_postings',
+      'adzuna_postings',
+    ];
+    const indicess = [
+      'jobtrees_postings',
+      'indeed_jobs_postings',
+      'big_job_site_postings',
+      'adzuna_postings',
+    ];
+    await generateSitemapsAndCleanup(indicess)
+    await generateAllSitemaps(indices, indicess);
+  } catch (error) {
+    console.error('Error during the process:', error.message);
+  } finally {
+    rl.close();
+  }
 })();

@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import pLimit from 'p-limit';
 
 dotenv.config({ path: '.env.local' });
-const limit = pLimit(5);
+const limit = pLimit(15);
 
 const region = process.env.region;
 const credentials = {
@@ -19,18 +19,58 @@ const OPEN_SEARCH_URL = process.env.OPEN_SEARCH_URL;
 const s3Client = new S3Client({ region, credentials });
 
 const getStaticLocations = () => [
-  { city: "Albuquerque", state: "New Mexico", stateAbbr: "NM" },
-  { city: "Tampa", state: "Florida", stateAbbr: "FL" },
-  { city: "Sacramento", state: "California", stateAbbr: "CA" },
-  { city: "Mesa", state: "Arizona", stateAbbr: "AZ" },
-  { city: "Atlanta", state: "Georgia", stateAbbr: "GA" },
-  { city: "Colorado Springs", state: "Colorado", stateAbbr: "CO" },
-  { city: "Kansas City", state: "Missouri", stateAbbr: "MO" },
-  { city: "Minneapolis", state: "Minnesota", stateAbbr: "MN" },
-  { city: "Miami", state: "Florida", stateAbbr: "FL" },
-  { city: "Virginia Beach", state: "Virginia", stateAbbr: "VA" },
-  { city: "Milwaukee", state: "Wisconsin", stateAbbr: "WI" },
+  { city: "new york", state: "new york", stateAbbr: "ny" },
+  { city: "los angeles", state: "california", stateAbbr: "ca" },
+  { city: "chicago", state: "illinois", stateAbbr: "il" },
+  { city: "houston", state: "texas", stateAbbr: "tx" },
+  { city: "phoenix", state: "arizona", stateAbbr: "az" },
+  { city: "philadelphia", state: "pennsylvania", stateAbbr: "pa" },
+  { city: "san antonio", state: "texas", stateAbbr: "tx" },
+  { city: "san diego", state: "california", stateAbbr: "ca" },
+  { city: "dallas", state: "texas", stateAbbr: "tx" },
+  { city: "jacksonville", state: "florida", stateAbbr: "fl" },
+  { city: "austin", state: "texas", stateAbbr: "tx" },
+  { city: "fort worth", state: "texas", stateAbbr: "tx" },
+  { city: "san jose", state: "california", stateAbbr: "ca" },
+  { city: "columbus", state: "ohio", stateAbbr: "oh" },
+  { city: "charlotte", state: "north carolina", stateAbbr: "nc" },
+  { city: "indianapolis", state: "indiana", stateAbbr: "in" },
+  { city: "san francisco", state: "california", stateAbbr: "ca" },
+  { city: "seattle", state: "washington", stateAbbr: "wa" },
+  { city: "denver", state: "colorado", stateAbbr: "co" },
+  { city: "oklahoma city", state: "oklahoma", stateAbbr: "ok" },
+  { city: "nashville", state: "tennessee", stateAbbr: "tn" },
+  { city: "washington", state: "district of columbia", stateAbbr: "dc" },
+  { city: "el paso", state: "texas", stateAbbr: "tx" },
+  { city: "las vegas", state: "nevada", stateAbbr: "nv" },
+  { city: "boston", state: "massachusetts", stateAbbr: "ma" },
+  { city: "detroit", state: "michigan", stateAbbr: "mi" },
+  { city: "portland", state: "oregon", stateAbbr: "or" },
+  { city: "louisville", state: "kentucky", stateAbbr: "ky" },
+  { city: "memphis", state: "tennessee", stateAbbr: "tn" },
+  { city: "baltimore", state: "maryland", stateAbbr: "md" },
+  { city: "milwaukee", state: "wisconsin", stateAbbr: "wi" },
+  { city: "albuquerque", state: "new mexico", stateAbbr: "nm" },
+  { city: "tucson", state: "arizona", stateAbbr: "az" },
+  { city: "fresno", state: "california", stateAbbr: "ca" },
+  { city: "sacramento", state: "california", stateAbbr: "ca" },
+  { city: "mesa", state: "arizona", stateAbbr: "az" },
+  { city: "atlanta", state: "georgia", stateAbbr: "ga" },
+  { city: "kansas city", state: "missouri", stateAbbr: "mo" },
+  { city: "colorado springs", state: "colorado", stateAbbr: "co" },
+  { city: "omaha", state: "nebraska", stateAbbr: "ne" },
+  { city: "raleigh", state: "north carolina", stateAbbr: "nc" },
+  { city: "miami", state: "florida", stateAbbr: "fl" },
+  { city: "virginia beach", state: "virginia", stateAbbr: "va" },
+  { city: "long beach", state: "california", stateAbbr: "ca" },
+  { city: "oakland", state: "california", stateAbbr: "ca" },
+  { city: "minneapolis", state: "minnesota", stateAbbr: "mn" },
+  { city: "bakersfield", state: "california", stateAbbr: "ca" },
+  { city: "tulsa", state: "oklahoma", stateAbbr: "ok" },
+  { city: "tampa", state: "florida", stateAbbr: "fl" },
+  { city: "arlington", state: "texas", stateAbbr: "tx" },
 ];
+
 const formatRoleName = (role) => role.toLowerCase().replace(/-/g, "--").replace(/ /g, "-");
 const formatCityName = (city) => city.toLowerCase().replace(/ /g, "-");
 const generateUrl = (role, city, stateAbbr) => `https://www.jobtrees.com/browse-careers/${formatRoleName(role)}-jobs-in-${formatCityName(city)}-${stateAbbr.toLowerCase()}`;
@@ -62,7 +102,7 @@ const checkJobExists = async (role, city, state) => {
       query: {
         bool: {
           must: [
-            { terms: { "jobTreesTitle.keyword": role.toLowerCase() } },
+            { terms: { "jobTreesTitle.keyword": [role.toLowerCase()] } },
             { term: { "city.keyword": city.toLowerCase() } },
             { term: { "state.keyword": state.toLowerCase().trim() } },
           ],
@@ -83,22 +123,38 @@ const checkJobExists = async (role, city, state) => {
 
     aws4.sign(searchRequest, credentials);
 
+    // console.log(`\n🔍 Querying index: "${indexName}" with request body:`, JSON.stringify(searchRequestBody, null, 2));
+
     try {
       const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
         method: searchRequest.method,
         headers: searchRequest.headers,
         body: searchRequest.body,
       });
+
       const searchResponseBody = await searchResponse.json();
-      return searchResponseBody.hits?.total?.value > 0;
+      // console.log(`📌 Response from "${indexName}":`, JSON.stringify(searchResponseBody, null, 2));
+
+      const jobCount = searchResponseBody.hits?.total?.value || 0;
+      console.log(`✅ Found ${jobCount} jobs for "${role}" in "${city}, ${state}" from "${indexName}"`);
+
+      return jobCount > 0;
     } catch (error) {
-      console.error(`Error checking jobs for ${role} in ${city}, ${state}:`, error);
+      console.error(`❌ Error checking jobs in index "${indexName}" for "${role}" in "${city}, ${state}":`, error);
       return false;
     }
   });
 
   const results = await Promise.all(searchRequests);
-  return results.some(result => result); // If any index has a job, return true
+  const jobExists = results.some(result => result);
+
+  if (jobExists) {
+    console.log(`✅ Job exists for "${role}" in "${city}, ${state}" ✅`);
+  } else {
+    console.log(`🚫 No job found for "${role}" in "${city}, ${state}" 🚫`);
+  }
+
+  return jobExists;
 };
 
 
@@ -174,10 +230,10 @@ const generateSitemapXml = async () => {
       })
     )
   );
-  
+
   await Promise.all(jobCheckPromises);
   console.log(`Generated ${urls.length} URLs for the sitemap`);
-  
+
 
   let sitemapIndex = 1;
   let currentUrls = [];
@@ -217,11 +273,11 @@ const generateSitemapXmlContent = (urls) => {
 };
 
 const generateSitemapIndex = (sitemapFiles) => {
-  const index = create('sitemapindex', { version: '1.0', encoding: 'UTF-8' })
+  const index = create('urlset', { version: '1.0', encoding: 'UTF-8' })
     .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
 
   sitemapFiles.forEach(file => {
-    index.ele('sitemap')
+    index.ele('url')
       .ele('loc', `https://www.jobtrees.com/api/sitemap_pSEO/${file}`).up()
       .ele('lastmod', new Date().toISOString()).up()
       .ele('changefreq', 'daily').up()
