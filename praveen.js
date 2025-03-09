@@ -1,5 +1,4 @@
 import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import aws4 from 'aws4';
 import { create } from 'xmlbuilder';
 import dotenv from 'dotenv';
 import pLimit from 'p-limit';
@@ -14,7 +13,6 @@ const credentials = {
 };
 const S3_BUCKET = process.env.S3_BUCKET;
 const S3_PUBLIC_PATH = process.env.S3_PUBLIC_PATH2;
-const OPEN_SEARCH_URL = process.env.OPEN_SEARCH_URL;
 
 const s3Client = new S3Client({ region, credentials });
 
@@ -50,186 +48,96 @@ const formatRoleName = (role) => role.toLowerCase().replace(/-/g, "--").replace(
 const formatCityName = (city) => city.toLowerCase().replace(/ /g, "-");
 const generateUrl = (role, city, stateAbbr) => `https://www.jobtrees.com/browse-careers/${formatRoleName(role)}-jobs-in-${formatCityName(city)}-${stateAbbr.toLowerCase()}`;
 
-
 const fetchRoles = async () => {
-  return ["software engineer", "product manager", "marketing specialist"];
-};
-
-// const fetchRoles = async () => {
-//   try {
-//     console.log('Fetching roles...');
-//     const response = await fetch('https://api.jobtrees.com/roles/roleList');
-//     const data = await response.json();
-//     console.log('Roles fetched successfully:', data);
-//     return data;
-//   } catch (error) {
-//     console.error('Error fetching roles:', error);
-//     return [];
-//   }
-// };
-
-const checkJobExists = async (role, city, state) => {
-  console.log(`Checking if job exists for ${role} in ${city}, ${state}...`);
-  const indices = ['adzuna_postings', 'big_job_site_postings', 'indeed_jobs_postings', 'jobtrees_postings', 'greenhouse_postings'];
-
-  const searchRequests = indices.map(async (indexName) => {
-    const searchRequestBody = {
-      query: {
-        bool: {
-          must: [
-            { terms: { "jobTreesTitle.keyword": [role.toLowerCase()] } },
-            { term: { "city.keyword": city.toLowerCase() } },
-            { term: { "state.keyword": state.toLowerCase().trim() } },
-          ],
-        },
-      },
-      size: 1,
-    };
-
-    const searchRequest = {
-      host: OPEN_SEARCH_URL,
-      path: `/${indexName}/_search`,
-      service: 'es',
-      region,
-      method: 'POST',
-      body: JSON.stringify(searchRequestBody),
-      headers: { 'Content-Type': 'application/json' },
-    };
-
-    aws4.sign(searchRequest, credentials);
-
-    // console.log(`\n🔍 Querying index: "${indexName}" with request body:`, JSON.stringify(searchRequestBody, null, 2));
-
-    try {
-      const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
-        method: searchRequest.method,
-        headers: searchRequest.headers,
-        body: searchRequest.body,
-      });
-
-      const searchResponseBody = await searchResponse.json();
-      // console.log(`📌 Response from "${indexName}":`, JSON.stringify(searchResponseBody, null, 2));
-
-      const jobCount = searchResponseBody.hits?.total?.value || 0;
-      console.log(`✅ Found ${jobCount} jobs for "${role}" in "${city}, ${state}" from "${indexName}"`);
-
-      return jobCount > 0;
-    } catch (error) {
-      console.error(`❌ Error checking jobs in index "${indexName}" for "${role}" in "${city}, ${state}":`, error);
-      return false;
-    }
-  });
-
-  const results = await Promise.all(searchRequests);
-  const jobExists = results.some(result => result);
-
-  if (jobExists) {
-    console.log(`✅ Job exists for "${role}" in "${city}, ${state}" ✅`);
-  } else {
-    console.log(`🚫 No job found for "${role}" in "${city}, ${state}" 🚫`);
+  try {
+    console.log('Fetching roles...');
+    const response = await fetch('https://api.jobtrees.com/roles/roleList');
+    const data = await response.json();
+    console.log('Roles fetched successfully:', data);
+    return data;
+  } catch (error) {
+    console.error('Error fetching roles:', error);
+    return [];
   }
-
-  return jobExists;
 };
 
+
+const getCurrentDateString = () => {
+  const date = new Date();
+  return date.toISOString().split('T')[0]; // format as YYYY-MM-DD
+};
+
+const generateSitemapXml = async (isOdd) => {
+  const MAX_URLS_PER_SITEMAP = 5000;
+  const locations = getStaticLocations();
+  const roles = await fetchRoles();
+  const urls = roles.flatMap(role => locations.map(({ city, stateAbbr }) => generateUrl(role, city, stateAbbr)));
+  
+  const currentDate = getCurrentDateString(); // Get the current date to append to the filenames
+  let sitemapFiles = [];
+  
+  const identifier = isOdd ? "odd" : "even";  // Use identifier for odd or even
+  let sitemapIndex = isOdd ? 1 : 2;  // Start from 1 for odd, 2 for even
+  
+  while (urls.length > 0) {
+    const batch = urls.splice(0, MAX_URLS_PER_SITEMAP);
+    const sitemapFileName = `pSEO_page_${sitemapIndex}_${identifier}_${currentDate}.xml`; // Append date and identifier
+    await limit(() => uploadToS3(sitemapFileName, generateSitemapXmlContent(batch)));
+    sitemapFiles.push(sitemapFileName);
+    sitemapIndex += 2;
+  }
+  
+  // await deleteOldSitemapFiles(sitemapFiles, currentDate, identifier); // Delete only today's files with correct identifier
+  await updateSitemapIndex(sitemapFiles, currentDate); // Update sitemap index with today's files
+};
+
+const deleteOldSitemapFiles = async (newFiles, date, identifier) => {
+  const existingFiles = await getExistingSitemapFiles(date, identifier);
+  const oldFiles = existingFiles.filter(file => !newFiles.includes(file));
+  
+  await Promise.all(oldFiles.map(file => 
+    limit(() => s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: `${S3_PUBLIC_PATH}${file}` })))
+  ));
+};
 
 const getExistingSitemapFiles = async () => {
   try {
     console.log('Fetching existing sitemaps...');
     const response = await s3Client.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: S3_PUBLIC_PATH }));
-    return response.Contents ? response.Contents.map(item => item.Key) : [];
+    return response.Contents ? response.Contents.map(item => item.Key).filter(file => !file.includes('sitemap_index_pSEO.xml')) : [];
   } catch (error) {
     console.error('Error fetching existing sitemaps:', error);
     return [];
   }
 };
 
-const deleteOutdatedSitemaps = async () => {
+
+const updateSitemapIndex = async (newFiles, date) => {
+  // Fetch existing sitemap files for the given date
+  const existingFiles = await getExistingSitemapFiles(date);
+
+  // Merge new files with existing files, avoiding duplicates
+  const allFiles = [...new Set([...existingFiles, ...newFiles])];
+  
+  // Upload the updated sitemap index
+  await limit(() => uploadToS3(`sitemap_index_pSEO.xml`, generateSitemapIndex(allFiles, date))); // Always update the main index file
+};
+
+const uploadToS3 = async (fileName, fileContent) => {
   try {
-    const existingFiles = await getExistingSitemapFiles();
-    console.log('Existing files in S3:', existingFiles);
-    const datePattern = /pSEO_(\d{4}-\d{2}-\d{2})\.xml/;
-    const filesToDelete = [];
-
-    // Filter files based on date
-    const datedFiles = existingFiles.filter(file => datePattern.test(file));
-    const filesWithDates = datedFiles.map(file => {
-      const match = file.match(datePattern);
-      return match ? { file, date: match[1] } : null;
-    }).filter(Boolean);
-
-    // Sort files by date (desc)
-    filesWithDates.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-    // Keep the latest 2 days and prepare files to delete
-    const filesToKeep = filesWithDates.slice(0, 2);
-    const filesToDeleteSet = new Set(filesWithDates.slice(2).map(f => f.file));
-
-    // Prepare the list of files to delete
-    for (const file of existingFiles) {
-      if (filesToDeleteSet.has(file)) {
-        filesToDelete.push(file);
-      }
-    }
-
-    // Check and delete outdated files
-    for (const file of filesToDelete) {
-      console.log(`Deleting ${file} from S3...`);
-      await s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: file }));
-      console.log(`File deleted: ${file}`);
-    }
-
+    const fullFilePath = `${S3_PUBLIC_PATH}${fileName}`;
+    console.log(`Uploading ${fullFilePath} to S3...`);
+    await s3Client.send(new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: fullFilePath,
+      Body: fileContent,
+      ContentType: 'application/xml',
+      ACL: 'public-read'
+    }));
+    console.log(`File uploaded: ${fullFilePath}`);
   } catch (error) {
-    console.error('Error deleting outdated sitemaps from S3:', error);
+    console.error(`Error uploading ${fileName} to S3:`, error);
   }
-};
-
-const checkJobExistsThrottled = async (role, city, state) => {
-  return limit(() => checkJobExists(role, city, state));
-};
-
-
-const generateSitemapXml = async () => {
-  const MAX_URLS_PER_SITEMAP = 5000;
-
-  console.log('Generating URLs...');
-  const locations = getStaticLocations();
-  const roles = await fetchRoles();
-  const urls = [];
-  const jobCheckPromises = roles.flatMap(role =>
-    locations.map(({ city, state, stateAbbr }) =>
-      checkJobExistsThrottled(role, city, state).then((exists) => {
-        if (exists) {
-          urls.push(generateUrl(role, city, stateAbbr));
-        }
-      })
-    )
-  );
-
-  await Promise.all(jobCheckPromises);
-  console.log(`Generated ${urls.length} URLs for the sitemap`);
-
-
-  let sitemapIndex = 1;
-  let currentUrls = [];
-  let sitemapFiles = [];
-  for (const url of urls) {
-    if (currentUrls.length >= MAX_URLS_PER_SITEMAP) {
-      const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
-      await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
-      sitemapFiles.push(sitemapFileName);
-      currentUrls = [];
-      sitemapIndex++;
-    }
-    currentUrls.push(url);
-  }
-  if (currentUrls.length > 0) {
-    const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
-    await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
-    sitemapFiles.push(sitemapFileName);
-  }
-  await uploadToS3('sitemap_index_pSEO.xml', await generateSitemapIndex(sitemapFiles));
-  console.log('Sitemap generated and uploaded successfully.');
 };
 
 const generateSitemapXmlContent = (urls) => {
@@ -247,70 +155,23 @@ const generateSitemapXmlContent = (urls) => {
   return urlset.end({ pretty: true });
 };
 
-const generateSitemapIndex = async (newSitemapFiles) => {
-  try {
-    // Fetch existing sitemap files from S3
-    let existingFiles = await getExistingSitemapFiles();
+const generateSitemapIndex = (sitemapFiles, date) => {
+  const index = create('urlset', { version: '1.0', encoding: 'UTF-8' })
+    .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
 
-    // 🚨 Remove "seo/" prefix and filter out "sitemap_index_pSEO.xml"
-    existingFiles = existingFiles
-      .map(file => file.replace(/^seo\//, '')) // Remove "seo/" prefix
-      .filter(file => file !== 'sitemap_index_pSEO.xml');
+  sitemapFiles.forEach(file => {
+    index.ele('url')
+      .ele('loc', `https://www.jobtrees.com/api/sitemap_pSEO/${file}`).up()
+      .ele('lastmod', new Date().toISOString()).up()
+      .ele('changefreq', 'daily').up()
+      .ele('priority', '1.0').up();
+  });
 
-    // Filter only XML sitemap files (avoiding any unrelated files)
-    const datePattern = /pSEO_.*\.xml$/;
-    let allSitemaps = existingFiles.filter(file => datePattern.test(file));
-
-    // Merge old sitemaps with new ones (avoiding duplicates)
-    let uniqueSitemapFiles = Array.from(new Set([...allSitemaps, ...newSitemapFiles]));
-
-    console.log(`📌 Total sitemaps included in index: ${uniqueSitemapFiles.length}`);
-
-    // Generate sitemap index XML
-    const index = create('urlset', { version: '1.0', encoding: 'UTF-8' })
-      .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
-
-    uniqueSitemapFiles.forEach(file => {
-      index.ele('url')
-        .ele('loc', `https://www.jobtrees.com/api/sitemap_pSEO/${file}`).up() // ✅ Now correct
-        .ele('lastmod', new Date().toISOString()).up()
-        .ele('changefreq', 'daily').up()
-        .ele('priority', '1.0').up();
-    });
-
-    return index.end({ pretty: true });
-
-  } catch (error) {
-    console.error('❌ Error generating sitemap index:', error);
-    return null;
-  }
+  return index.end({ pretty: true });
 };
 
-
-const uploadToS3 = async (fileName, fileContent) => {
-  try {
-    const fullFilePath = `${S3_PUBLIC_PATH}${fileName}`;
-    console.log(`Uploading ${fullFilePath} to S3...`);
-
-    // Convert fileContent to a Buffer (fix for AWS hashing issue)
-    const fileBuffer = Buffer.from(fileContent, 'utf-8');
-
-    await s3Client.send(new PutObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: fullFilePath,
-      Body: fileBuffer,  // Ensure proper format
-      ContentType: 'application/xml',
-      ACL: 'public-read'
-    }));
-
-    console.log(`✅ File uploaded successfully: ${fullFilePath}`);
-  } catch (error) {
-    console.error(`❌ Error uploading ${fileName} to S3:`, error);
-  }
-};
-
-
+// Call these methods separately for odd and even
 (async () => {
-  await deleteOutdatedSitemaps();
-  await generateSitemapXml();
+  await generateSitemapXml(true);  // Odd
+  // await generateSitemapXml(false); // Even
 })();
