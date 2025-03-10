@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import pLimit from 'p-limit';
 
 dotenv.config({ path: '.env.local' });
-const limit = pLimit(15);
+const limit = pLimit(25);
 
 const region = process.env.region;
 const credentials = {
