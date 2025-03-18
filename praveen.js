@@ -14,6 +14,8 @@ const credentials = {
 };
 const S3_BUCKET = process.env.S3_BUCKET;
 const S3_PUBLIC_PATH = process.env.S3_PUBLIC_PATH2;
+const S3_PUBLIC_PATH_CITY = process.env.S3_PUBLIC_PATH3;
+const S3_PUBLIC_PATH_ROLE = process.env.S3_PUBLIC_PATH4;
 const OPEN_SEARCH_URL = process.env.OPEN_SEARCH_URL;
 
 const s3Client = new S3Client({ region, credentials });
@@ -82,10 +84,8 @@ const generateUrl = (role, city, stateAbbr) => `https://www.jobtrees.com/browse-
 
 const fetchRoles = async () => {
   try {
-    console.log('Fetching roles...');
     const response = await fetch('https://api.jobtrees.com/roles/roleList');
     const data = await response.json();
-    console.log('Roles fetched successfully:', data);
     return data;
   } catch (error) {
     console.error('Error fetching roles:', error);
@@ -93,23 +93,55 @@ const fetchRoles = async () => {
   }
 };
 
-const checkJobExists = async (role, city, state) => {
-  console.log(`Checking if job exists for ${role} in ${city}, ${state}...`);
-  const indices = ['adzuna_postings', 'big_job_site_postings', 'indeed_jobs_postings', 'jobtrees_postings', 'greenhouse_postings'];
+const checkJobExists = async (type, role, city, state) => {
+  const indices = [
+    'jobtrees_postings',
+    'indeed_jobs_postings',
+    'big_job_site_postings',
+    'adzuna_postings',
+  ];
 
   const searchRequests = indices.map(async (indexName) => {
-    const searchRequestBody = {
-      query: {
-        bool: {
-          must: [
-            { terms: { "jobTreesTitle.keyword": [role.toLowerCase()] } },
-            { term: { "city.keyword": city.toLowerCase() } },
-            { term: { "state.keyword": state.toLowerCase().trim() } },
-          ],
+    let searchRequestBody;
+    if (type === 'all') {
+      searchRequestBody = {
+        query: {
+          bool: {
+            must: [
+              { terms: { "jobTreesTitle.keyword": [role.toLowerCase()] } },
+              { term: { "city.keyword": city.toLowerCase() } },
+              { term: { "state.keyword": state.toLowerCase().trim() } },
+            ],
+          },
         },
-      },
-      size: 1,
-    };
+        size: 1,
+      };
+    }
+    else if (type === 'role') {
+      searchRequestBody = {
+        query: {
+          bool: {
+            must: [
+              { terms: { "jobTreesTitle.keyword": [role.toLowerCase()] } },
+            ],
+          },
+        },
+        size: 1,
+      };
+    }
+    else if (type === 'city') {
+      searchRequestBody = {
+        query: {
+          bool: {
+            must: [
+              { term: { "city.keyword": city.toLowerCase() } },
+              { term: { "state.keyword": state.toLowerCase().trim() } },
+            ],
+          },
+        },
+        size: 1,
+      };
+    }
 
     const searchRequest = {
       host: OPEN_SEARCH_URL,
@@ -122,9 +154,6 @@ const checkJobExists = async (role, city, state) => {
     };
 
     aws4.sign(searchRequest, credentials);
-
-    // console.log(`\n🔍 Querying index: "${indexName}" with request body:`, JSON.stringify(searchRequestBody, null, 2));
-
     try {
       const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
         method: searchRequest.method,
@@ -133,8 +162,6 @@ const checkJobExists = async (role, city, state) => {
       });
 
       const searchResponseBody = await searchResponse.json();
-      // console.log(`📌 Response from "${indexName}":`, JSON.stringify(searchResponseBody, null, 2));
-
       const jobCount = searchResponseBody.hits?.total?.value || 0;
       console.log(`✅ Found ${jobCount} jobs for "${role}" in "${city}, ${state}" from "${indexName}"`);
 
@@ -147,13 +174,6 @@ const checkJobExists = async (role, city, state) => {
 
   const results = await Promise.all(searchRequests);
   const jobExists = results.some(result => result);
-
-  if (jobExists) {
-    console.log(`✅ Job exists for "${role}" in "${city}, ${state}" ✅`);
-  } else {
-    console.log(`🚫 No job found for "${role}" in "${city}, ${state}" 🚫`);
-  }
-
   return jobExists;
 };
 
@@ -161,100 +181,146 @@ const checkJobExists = async (role, city, state) => {
 const getExistingSitemapFiles = async () => {
   try {
     console.log('Fetching existing sitemaps...');
-    const response = await s3Client.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: S3_PUBLIC_PATH }));
-    return response.Contents ? response.Contents.map(item => item.Key) : [];
+
+    const paths = [S3_PUBLIC_PATH, S3_PUBLIC_PATH_CITY, S3_PUBLIC_PATH_ROLE];
+    let allFiles = [];
+
+    for (const path of paths) {
+      const response = await s3Client.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: path }));
+      if (response.Contents) {
+        const existingFiles = response.Contents.map(file => ({
+          key: file.Key,
+          lastModified: file.LastModified,
+        }));
+        
+        // If you still want to combine the `existingFiles` with `allFiles`, you can use concat:
+        allFiles = allFiles.concat(existingFiles);
+      }
+    }
+    return allFiles;
   } catch (error) {
     console.error('Error fetching existing sitemaps:', error);
     return [];
   }
 };
 
+
 const deleteOutdatedSitemaps = async () => {
   try {
     const existingFiles = await getExistingSitemapFiles();
     console.log('Existing files in S3:', existingFiles);
-    const datePattern = /pSEO_(\d{4}-\d{2}-\d{2})\.xml/;
-    const filesToDelete = [];
 
-    // Filter files based on date
-    const datedFiles = existingFiles.filter(file => datePattern.test(file));
-    const filesWithDates = datedFiles.map(file => {
-      const match = file.match(datePattern);
-      return match ? { file, date: match[1] } : null;
-    }).filter(Boolean);
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now - 24 * 60 * 60 * 1000); // 24 hours ago
 
-    // Sort files by date (desc)
-    filesWithDates.sort((a, b) => new Date(b.date) - new Date(a.date));
+    // Filter files based on lastModified date
+    const filesToDelete = existingFiles.filter(file => {
+      const lastModifiedDate = new Date(file.lastModified);
+      return lastModifiedDate < twentyFourHoursAgo;
+    }).map(file => file.key);
 
-    // Keep the latest 2 days and prepare files to delete
-    const filesToKeep = filesWithDates.slice(0, 2);
-    const filesToDeleteSet = new Set(filesWithDates.slice(2).map(f => f.file));
-
-    // Prepare the list of files to delete
-    for (const file of existingFiles) {
-      if (filesToDeleteSet.has(file)) {
-        filesToDelete.push(file);
-      }
+    if (filesToDelete.length === 0) {
+      console.log('No outdated files found to delete.');
+      return;
     }
-
     // Check and delete outdated files
-    for (const file of filesToDelete) {
-      console.log(`Deleting ${file} from S3...`);
-      await s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: file }));
-      console.log(`File deleted: ${file}`);
+    for (const fileKey of filesToDelete) {
+      console.log(`Deleting ${fileKey} from S3...`);
+      await s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: fileKey }));
+      console.log(`File deleted: ${fileKey}`);
     }
 
   } catch (error) {
     console.error('Error deleting outdated sitemaps from S3:', error);
   }
-};
-
-const checkJobExistsThrottled = async (role, city, state) => {
-  return limit(() => checkJobExists(role, city, state));
+  
 };
 
 
-const generateSitemapXml = async () => {
+const checkJobExistsThrottled = async (type, role, city, state) => {
+  return limit(() => checkJobExists(type, role, city, state));
+};
+
+
+const generateSitemapXml = async (type) => {
   const MAX_URLS_PER_SITEMAP = 5000;
 
   console.log('Generating URLs...');
   const locations = getStaticLocations();
   const roles = await fetchRoles();
   const urls = [];
-  const jobCheckPromises = roles.flatMap(role =>
-    locations.map(({ city, state, stateAbbr }) =>
-      checkJobExistsThrottled(role, city, state).then((exists) => {
-        if (exists) {
-          urls.push(generateUrl(role, city, stateAbbr));
-        }
-      })
-    )
-  );
+  
+  console.log(`Generating URLs for sitemap type: ${type}`);
 
-  await Promise.all(jobCheckPromises);
-  console.log(`Generated ${urls.length} URLs for the sitemap`);
+  if (type === 'role') {
+    await Promise.all(
+      roles.map(role =>
+        checkJobExistsThrottled(type, role, null, null).then((exists) => {
+          if (exists) urls.push(`https://www.jobtrees.com/browse-careers/${formatRoleName(role)}`);
+        })
+      )
+    );
+  } else if (type === 'city') {
+    await Promise.all(
+      locations.map(({ city, state, stateAbbr }) =>
+        checkJobExistsThrottled(type, null, city, state).then((exists) => {
+          if (exists) urls.push(`https://www.jobtrees.com/browse-careers/${formatCityName(city)}-${stateAbbr.toLowerCase()}`);
+        })
+      )
+    );
+  } else {
+    await Promise.all(
+      roles.flatMap(role =>
+        locations.map(({ city, state, stateAbbr }) =>
+          checkJobExistsThrottled(type, role, city, state).then((exists) => {
+            if (exists) urls.push(generateUrl(role, city, stateAbbr));
+          })
+        )
+      )
+    );
+  }
 
+  console.log(`Generated ${urls.length} URLs for type: ${type}`);
 
   let sitemapIndex = 1;
   let currentUrls = [];
   let sitemapFiles = [];
+
+  // Determine file name prefix based on type
+  let filePrefix, indexFile;
+  if (type === 'role') {
+    filePrefix = 'sitemap_browse_role';
+    indexFile = 'sitemap_index_browse_role.xml';
+  } else if (type === 'city') {
+    filePrefix = 'sitemap_browse_city';
+    indexFile = 'sitemap_index_browse_city.xml';
+  } else {
+    filePrefix = 'pSEO_page';
+    indexFile = 'sitemap_index_pSEO.xml';
+  }
+
+  // Generate and upload individual sitemap files
   for (const url of urls) {
     if (currentUrls.length >= MAX_URLS_PER_SITEMAP) {
-      const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
-      await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
+      const sitemapFileName = `${filePrefix}_${sitemapIndex}.xml`;
+      await uploadToS3(type, sitemapFileName, generateSitemapXmlContent(currentUrls));
       sitemapFiles.push(sitemapFileName);
       currentUrls = [];
       sitemapIndex++;
     }
     currentUrls.push(url);
   }
+
   if (currentUrls.length > 0) {
-    const sitemapFileName = `pSEO_page_${sitemapIndex}.xml`;
-    await uploadToS3(sitemapFileName, generateSitemapXmlContent(currentUrls));
+    const sitemapFileName = `${filePrefix}_${sitemapIndex}.xml`;
+    await uploadToS3(type, sitemapFileName, generateSitemapXmlContent(currentUrls));
     sitemapFiles.push(sitemapFileName);
   }
-  await uploadToS3('sitemap_index_pSEO.xml', generateSitemapIndex(sitemapFiles));
-  console.log('Sitemap generated and uploaded successfully.');
+
+  // Upload the sitemap index
+  await uploadToS3(type, indexFile, generateSitemapIndex(sitemapFiles, type));
+
+  console.log(`Sitemap ${type} generated and uploaded successfully.`);
 };
 
 const generateSitemapXmlContent = (urls) => {
@@ -272,13 +338,20 @@ const generateSitemapXmlContent = (urls) => {
   return urlset.end({ pretty: true });
 };
 
-const generateSitemapIndex = (sitemapFiles) => {
+const generateSitemapIndex = (sitemapFiles, type) => {
   const index = create('urlset', { version: '1.0', encoding: 'UTF-8' })
     .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
-
+    let fullFilePaths;
+    if (type === 'role') {
+      fullFilePaths = `${S3_PUBLIC_PATH_ROLE}`;
+    } else if (type === 'city') {
+      fullFilePaths = `${S3_PUBLIC_PATH_CITY}`;
+    } else {
+      fullFilePaths = `${S3_PUBLIC_PATH}`;
+    }
   sitemapFiles.forEach(file => {
     index.ele('url')
-      .ele('loc', `https://www.jobtrees.com/api/sitemap_pSEO/${file}`).up()
+      .ele('loc', `https://www.jobtrees.com/api/${fullFilePaths}${file}`).up()
       .ele('lastmod', new Date().toISOString()).up()
       .ele('changefreq', 'daily').up()
       .ele('priority', '1.0').up();
@@ -287,9 +360,16 @@ const generateSitemapIndex = (sitemapFiles) => {
   return index.end({ pretty: true });
 };
 
-const uploadToS3 = async (fileName, fileContent) => {
+const uploadToS3 = async (type, fileName, fileContent) => {
   try {
-    const fullFilePath = `${S3_PUBLIC_PATH}${fileName}`;
+    let fullFilePath;
+    if (type === 'role') {
+      fullFilePath = `${S3_PUBLIC_PATH_ROLE}${fileName}`;
+    } else if (type === 'city') {
+      fullFilePath = `${S3_PUBLIC_PATH_CITY}${fileName}`;
+    } else {
+      fullFilePath = `${S3_PUBLIC_PATH}${fileName}`;
+    }
     console.log(`Uploading ${fullFilePath} to S3...`);
     await s3Client.send(new PutObjectCommand({
       Bucket: S3_BUCKET,
@@ -305,6 +385,9 @@ const uploadToS3 = async (fileName, fileContent) => {
 };
 
 (async () => {
+  // await getExistingSitemapFiles()
   await deleteOutdatedSitemaps();
-  await generateSitemapXml();
+  await generateSitemapXml('role');
+  await generateSitemapXml('city');
+  await generateSitemapXml('all');
 })();

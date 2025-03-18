@@ -97,7 +97,7 @@ const generateSitemapXml = async (indexName, pageNumber, pageSize) => {
       query: { match_all: {} },
       from: (pageNumber - 1) * pageSize,
       size: pageSize,
-      _source: ["id"]
+      _source: ["id", "postingDate"]
     };
 
     const searchRequest = {
@@ -124,8 +124,11 @@ const generateSitemapXml = async (indexName, pageNumber, pageSize) => {
       const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
       jobPostings.forEach((posting) => {
         const locValue = `https://www.jobtrees.com/postid/${posting._source.id}`;
+        const postingDate = posting._source.postingDate 
+        ? new Date(posting._source.postingDate).toISOString() 
+        : new Date().toISOString();
         root.ele('url').ele('loc', locValue).up()
-          .ele('lastmod', new Date().toISOString()).up()
+          .ele('lastmod', postingDate).up()
           .ele('changefreq', 'daily').up()
           .ele('priority', 1.0).up();
       });
