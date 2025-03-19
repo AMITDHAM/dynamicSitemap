@@ -97,7 +97,7 @@ const generateSitemapXml = async (indexName, pageNumber, pageSize) => {
       query: { match_all: {} },
       from: (pageNumber - 1) * pageSize,
       size: pageSize,
-      _source: ["id", "postingDate"]
+      _source: ["id", "postingDate", "updatedDate", "status"]
     };
 
     const searchRequest = {
@@ -120,15 +120,20 @@ const generateSitemapXml = async (indexName, pageNumber, pageSize) => {
     const searchResponseBody = await searchResponse.json();
     const jobPostings = (searchResponseBody.hits && searchResponseBody.hits.hits) || [];
 
-    if (jobPostings.length > 0) {
+    // Filter only active jobs
+    const activePostings = jobPostings.filter((posting) => {
+      const status = posting._source.status || "Active"; // Default to Active
+      return status === "Active";
+    });
+
+    if (activePostings.length > 0) {
       const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
-      jobPostings.forEach((posting) => {
+      activePostings.forEach((posting) => {
         const locValue = `https://www.jobtrees.com/postid/${posting._source.id}`;
-        const postingDate = posting._source.postingDate 
-        ? new Date(posting._source.postingDate).toISOString() 
-        : new Date().toISOString();
+        const lastModified = posting._source.updatedDate || posting._source.postingDate || new Date().toISOString();
+
         root.ele('url').ele('loc', locValue).up()
-          .ele('lastmod', postingDate).up()
+          .ele('lastmod', new Date(lastModified).toISOString()).up()
           .ele('changefreq', 'daily').up()
           .ele('priority', 1.0).up();
       });
@@ -137,7 +142,7 @@ const generateSitemapXml = async (indexName, pageNumber, pageSize) => {
       await uploadToS3(fileName, root.end({ pretty: true }));
       console.log(`Sitemap ${fileName} generated and uploaded.`);
     } else {
-      console.log(`No job postings found for page ${pageNumber} of index ${indexName}.`);
+      console.log(`No active job postings found for page ${pageNumber} of index ${indexName}.`);
     }
   } catch (error) {
     console.error(`Error generating sitemap for page ${pageNumber} of index ${indexName}:`, error.message);

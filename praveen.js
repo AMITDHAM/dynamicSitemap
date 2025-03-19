@@ -163,7 +163,15 @@ const checkJobExists = async (type, role, city, state) => {
 
       const searchResponseBody = await searchResponse.json();
       const jobCount = searchResponseBody.hits?.total?.value || 0;
-      console.log(`✅ Found ${jobCount} jobs for "${role}" in "${city}, ${state}" from "${indexName}"`);
+      if (type === 'all') {
+        console.log(`✅ Found ${jobCount} jobs for "${role}" in "${city}, ${state}" from "${indexName}"`);
+      }
+      else if (type === 'role') {
+        console.log(`✅ Found ${jobCount} jobs for "${role}" from "${indexName}"`);
+      }
+      else if (type === 'city') {
+        console.log(`✅ Found ${jobCount} jobs for "${city}, ${state}" from "${indexName}"`);
+      }
 
       return jobCount > 0;
     } catch (error) {
@@ -347,7 +355,7 @@ const generateSitemapIndex = (sitemapFiles, type) => {
     } else if (type === 'city') {
       fullFilePaths = `${S3_PUBLIC_PATH_CITY}`;
     } else {
-      fullFilePaths = `${S3_PUBLIC_PATH}`;
+      fullFilePaths = `sitemap_pSEO`;
     }
   sitemapFiles.forEach(file => {
     index.ele('url')
