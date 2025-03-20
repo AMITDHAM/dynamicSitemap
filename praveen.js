@@ -355,7 +355,7 @@ const generateSitemapIndex = (sitemapFiles, type) => {
     } else if (type === 'city') {
       fullFilePaths = `${S3_PUBLIC_PATH_CITY}`;
     } else {
-      fullFilePaths = `sitemap_pSEO`;
+      fullFilePaths = `sitemap_pSEO/`;
     }
   sitemapFiles.forEach(file => {
     index.ele('url')
