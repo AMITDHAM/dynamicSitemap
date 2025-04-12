@@ -248,68 +248,8 @@ const generateMainSitemapXml = async (existingFiles) => {
   await uploadToS3(fileName, xmlString);
   console.log('Main sitemap index generated and uploaded.');
 };
-const generateIndexCountSitemap = async (indices) => {
-  const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
-  const pageSize = 5000; // Number of postings per sitemap
 
-  for (const indexName of indices) {
-    try {
-      const requestBody = {
-        query: { match_all: {} },
-      };
-
-      const request = {
-        host: OPEN_SEARCH_URL,
-        path: `/${indexName}/_count`,
-        service: 'es',
-        region: region,
-        method: 'POST',
-        body: JSON.stringify(requestBody),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      };
-
-      aws4.sign(request, {
-        accessKeyId: credentials.accessKeyId,
-        secretAccessKey: credentials.secretAccessKey,
-      });
-
-      const response = await fetch(`https://${request.host}${request.path}`, {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-      });
-      const responseBody = await response.json();
-      const totalCount = responseBody.count;
-
-      if (!totalCount) {
-        throw new Error(`Unable to fetch count from index ${indexName}`);
-      }
-
-      const sitemapCount = Math.ceil(totalCount / pageSize);
-
-      // Include the summary in the XML structure
-      const locValue = `Index: ${indexName}, Total Postings: ${totalCount}, Sitemaps to Generate: ${sitemapCount}`;
-
-      root.ele('url').ele('loc', locValue).up()
-        .ele('lastmod', new Date().toISOString()).up()
-        .ele('changefreq', 'daily').up()
-        .ele('priority', 1.0).up();
-    } catch (error) {
-      console.error(`Error fetching count for index ${indexName}:`, error.message);
-    }
-  }
-
-  const xmlString = root.end({ pretty: true });
-  const fileName = 'sitemap_index_counts.xml';
-
-  await uploadToS3(fileName, xmlString);
-  const fileUrl = `https://www.jobtrees.com/api/sitemap/${fileName}`;
-  console.log(`Index count sitemap generated and uploaded. Accessible at: ${fileUrl}`);
-};
-
-const generateMissedSitemaps = async (indices, indicess) => {
+const generateMissedSitemaps = async (indices) => {
   const pageSize = 5000;
   console.log('missed sitemaps generating')
   for (const indexName of indices) {
@@ -352,7 +292,6 @@ const generateMissedSitemaps = async (indices, indicess) => {
     }
   }
   const existingFiles = await getExistingSitemapFiles();
-  // await generateIndexCountSitemap(indicess)
   await generateMainSitemapXml(existingFiles);
 };
 
@@ -416,53 +355,7 @@ const submitToIndexNow = async (sitemapUrl) => {
   }
 };
 
-const parsePageInput = (input, totalPages) => {
-  const pages = new Set();
-
-  const parts = input.split(',');
-  for (const part of parts) {
-    if (part.includes('-')) {
-      const [start, end] = part.split('-').map(Number);
-      for (let i = Math.max(1, start); i <= Math.min(end, totalPages); i++) {
-        pages.add(i);
-      }
-    } else {
-      const page = parseInt(part, 10);
-      if (page >= 1 && page <= totalPages) {
-        pages.add(page);
-      }
-    }
-  }
-
-  return Array.from(pages).sort((a, b) => a - b);
-};
-
-// const generateAllSitemaps = async (indices, indicess) => {
-//   const pageSize = 5000;
-
-//   for (const indexName of indices) {
-//     const totalPages = await fetchTotalPages(indexName, pageSize);
-//     console.log(`Total pages for ${indexName}: ${totalPages}`);
-
-//     const userInput = await new Promise((resolve) => {
-//       rl.question(
-//         `Enter page numbers for ${indexName} (e.g., "1", "1-10", "5,10,20"): `,
-//         (input) => resolve(input)
-//       );
-//     });
-
-//     const pages = userInput === '0'
-//       ? Array.from({ length: totalPages }, (_, i) => i + 1) // All pages
-//       : parsePageInput(userInput, totalPages);
-
-//     for (const page of pages) {
-//       await generateSitemapXml(indexName, page, pageSize);
-//     }
-//     await generateMissedSitemaps(indices, indicess)
-//   }
-// };
-
-const generateAllSitemaps = async (indices, indicess) => {
+const generateAllSitemaps = async (indices) => {
   const pageSize = 5000;
   for (const indexName of indices) {
     const totalPages = await fetchTotalPages(indexName, pageSize);
@@ -471,7 +364,7 @@ const generateAllSitemaps = async (indices, indicess) => {
     for (let page = 1; page <= totalPages; page++) {
       await generateSitemapXml(indexName, page, pageSize);
     }
-    await generateMissedSitemaps(indices, indicess)
+    await generateMissedSitemaps(indices)
   }
 };
 
@@ -488,14 +381,8 @@ const rl = readline.createInterface({
       'big_job_site_postings',
       'adzuna_postings',
     ];
-    const indicess = [
-      'jobtrees_postings',
-      'indeed_jobs_postings',
-      'big_job_site_postings',
-      'adzuna_postings',
-    ];
-    await generateSitemapsAndCleanup(indicess)
-    await generateAllSitemaps(indices, indicess);
+    // await generateSitemapsAndCleanup(indices)
+    await generateAllSitemaps(indices);
   } catch (error) {
     console.error('Error during the process:', error.message);
   } finally {
