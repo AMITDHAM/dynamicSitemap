@@ -1,22 +1,25 @@
-import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import aws4 from 'aws4';
+import {
+  S3Client,
+  PutObjectCommand,
+} from '@aws-sdk/client-s3';
 import { create } from 'xmlbuilder';
 import dotenv from 'dotenv';
 import pLimit from 'p-limit';
 
 dotenv.config({ path: '.env.local' });
-const limit = pLimit(20);
 
+const limit = pLimit(30); // Increased concurrency
 const region = process.env.region;
 const credentials = {
   accessKeyId: process.env.accessKeyId,
   secretAccessKey: process.env.secretAccessKey,
 };
 const S3_BUCKET = process.env.S3_BUCKET;
-const S3_PUBLIC_PATH = process.env.S3_PUBLIC_PATH2;
-const S3_PUBLIC_PATH_CITY = process.env.S3_PUBLIC_PATH3;
-const S3_PUBLIC_PATH_ROLE = process.env.S3_PUBLIC_PATH4;
-const OPEN_SEARCH_URL = process.env.OPEN_SEARCH_URL;
+const PATHS = {
+  all: process.env.S3_PUBLIC_PATH2,
+  city: process.env.S3_PUBLIC_PATH3,
+  role: process.env.S3_PUBLIC_PATH4,
+};
 
 const s3Client = new S3Client({ region, credentials });
 
@@ -73,291 +76,38 @@ const getStaticLocations = () => [
   { city: "arlington", state: "texas", stateAbbr: "tx" },
 ];
 
-const formatRoleName = (role) => role.toLowerCase().replace(/-/g, "--").replace(/ /g, "-");
-const formatCityName = (city) => city.toLowerCase().replace(/ /g, "-");
-const generateUrl = (role, city, stateAbbr) => `https://www.jobtrees.com/browse-careers/${formatRoleName(role)}-jobs-in-${formatCityName(city)}-${stateAbbr.toLowerCase()}`;
-
-
-// const fetchRoles = async () => {
-//   return ["software engineer", "product manager", "marketing specialist"];
-// };
+const formatRole = (r) => r.toLowerCase().replace(/-/g, '--').replace(/ /g, '-');
+const formatCity = (c) => c.toLowerCase().replace(/ /g, '-');
+const buildUrl = (r, c, s) => `https://www.jobtrees.com/browse-careers/${formatRole(r)}-jobs-in-${formatCity(c)}-${s}`;
 
 const fetchRoles = async () => {
   try {
-    const response = await fetch('https://api.jobtrees.com/roles/roleList');
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('Error fetching roles:', error);
+    const res = await fetch('https://api.jobtrees.com/roles/roleList');
+    return await res.json();
+  } catch (err) {
+    console.error('Fetch roles error:', err);
     return [];
   }
 };
 
-const checkJobExists = async (type, role, city, state) => {
-  const indices = [
-    'jobtrees_postings',
-    'indeed_jobs_postings',
-    'big_job_site_postings',
-    'adzuna_postings',
-  ];
+const createXmlContent = (urls) =>
+  create('urlset', { version: '1.0', encoding: 'UTF-8' })
+    .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9')
+    .ele(urls.map(url => ({ url: { loc: url, lastmod: new Date().toISOString(), changefreq: 'daily', priority: '1.0' } })))
+    .end({ pretty: true });
 
-  const searchRequests = indices.map(async (indexName) => {
-    let searchRequestBody;
-    if (type === 'all') {
-      searchRequestBody = {
-        query: {
-          bool: {
-            must: [
-              { terms: { "jobTreesTitles.keyword": [role] } },
-              { term: { "city.keyword": city } },
-              { term: { "state.keyword": state.trim() } }
-            ],
-          },
-        },
-        size: 1,
-      };
-    }
-    else if (type === 'role') {
-      searchRequestBody = {
-        query: {
-          bool: {
-            must: [
-              { terms: { "jobTreesTitles.keyword": [role] } },
-            ],
-          },
-        },
-        size: 1,
-      };
-    }
-    else if (type === 'city') {
-      searchRequestBody = {
-        query: {
-          bool: {
-            must: [
-              { term: { "city.keyword": city } },
-              { term: { "state.keyword": state.trim() } },
-            ],
-          },
-        },
-        size: 1,
-      };
-    }
-
-    const searchRequest = {
-      host: OPEN_SEARCH_URL,
-      path: `/${indexName}/_search`,
-      service: 'es',
-      region,
-      method: 'POST',
-      body: JSON.stringify(searchRequestBody),
-      headers: { 'Content-Type': 'application/json' },
-    };
-
-    aws4.sign(searchRequest, credentials);
-    try {
-      const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
-        method: searchRequest.method,
-        headers: searchRequest.headers,
-        body: searchRequest.body,
-      });
-
-      const searchResponseBody = await searchResponse.json();
-      const jobCount = searchResponseBody.hits?.total?.value || 0;
-      if (type === 'all') {
-        console.log(`✅ Found ${jobCount} jobs for "${role}" in "${city}, ${state}" from "${indexName}"`);
-      }
-      else if (type === 'role') {
-        console.log(`✅ Found ${jobCount} jobs for "${role}" from "${indexName}"`);
-      }
-      else if (type === 'city') {
-        console.log(`✅ Found ${jobCount} jobs for "${city}, ${state}" from "${indexName}"`);
-      }
-
-      return jobCount > 0;
-    } catch (error) {
-      console.error(`❌ Error checking jobs in index "${indexName}" for "${role}" in "${city}, ${state}":`, error);
-      return false;
-    }
-  });
-
-  const results = await Promise.all(searchRequests);
-  const jobExists = results.some(result => result);
-  return jobExists;
-};
-
-
-const getExistingSitemapFiles = async () => {
-  try {
-    console.log('Fetching existing sitemaps...');
-
-    const paths = [S3_PUBLIC_PATH, S3_PUBLIC_PATH_CITY, S3_PUBLIC_PATH_ROLE];
-    let allFiles = [];
-
-    for (const path of paths) {
-      const response = await s3Client.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: path }));
-      if (response.Contents) {
-        const existingFiles = response.Contents.map(file => ({
-          key: file.Key,
-          lastModified: file.LastModified,
-        }));
-        
-        // If you still want to combine the `existingFiles` with `allFiles`, you can use concat:
-        allFiles = allFiles.concat(existingFiles);
-      }
-    }
-    return allFiles;
-  } catch (error) {
-    console.error('Error fetching existing sitemaps:', error);
-    return [];
-  }
-};
-
-
-const deleteOutdatedSitemaps = async () => {
-  try {
-    const existingFiles = await getExistingSitemapFiles();
-    console.log('Existing files in S3:', existingFiles);
-
-    const now = new Date();
-    const twentyFourHoursAgo = new Date(now - 24 * 60 * 60 * 1000); // 24 hours ago
-
-    // Filter files based on lastModified date
-    const filesToDelete = existingFiles.filter(file => {
-      const lastModifiedDate = new Date(file.lastModified);
-      return lastModifiedDate < twentyFourHoursAgo;
-    }).map(file => file.key);
-
-    if (filesToDelete.length === 0) {
-      console.log('No outdated files found to delete.');
-      return;
-    }
-    // Check and delete outdated files
-    for (const fileKey of filesToDelete) {
-      console.log(`Deleting ${fileKey} from S3...`);
-      await s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: fileKey }));
-      console.log(`File deleted: ${fileKey}`);
-    }
-
-  } catch (error) {
-    console.error('Error deleting outdated sitemaps from S3:', error);
-  }
-  
-};
-
-
-const checkJobExistsThrottled = async (type, role, city, state) => {
-  return limit(() => checkJobExists(type, role, city, state));
-};
-
-
-const generateSitemapXml = async (type) => {
-  const MAX_URLS_PER_SITEMAP = 5000;
-
-  console.log('Generating URLs...');
-  const locations = getStaticLocations();
-  const roles = await fetchRoles();
-  const urls = [];
-  
-  console.log(`Generating URLs for sitemap type: ${type}`);
-
-  if (type === 'role') {
-    await Promise.all(
-      roles.map(role =>
-        checkJobExistsThrottled(type, role, null, null).then((exists) => {
-          if (exists) urls.push(`https://www.jobtrees.com/browse-careers/${formatRoleName(role)}`);
-        })
-      )
-    );
-  } else if (type === 'city') {
-    await Promise.all(
-      locations.map(({ city, state, stateAbbr }) =>
-        checkJobExistsThrottled(type, null, city, state).then((exists) => {
-          if (exists) urls.push(`https://www.jobtrees.com/browse-careers/${formatCityName(city)}-${stateAbbr.toLowerCase()}`);
-        })
-      )
-    );
-  } else {
-    await Promise.all(
-      roles.flatMap(role =>
-        locations.map(({ city, state, stateAbbr }) =>
-          checkJobExistsThrottled(type, role, city, state).then((exists) => {
-            if (exists) urls.push(generateUrl(role, city, stateAbbr));
-          })
-        )
-      )
-    );
-  }
-
-  console.log(`Generated ${urls.length} URLs for type: ${type}`);
-
-  let sitemapIndex = 1;
-  let currentUrls = [];
-  let sitemapFiles = [];
-
-  // Determine file name prefix based on type
-  let filePrefix, indexFile;
-  if (type === 'role') {
-    filePrefix = 'sitemap_browse_role';
-    indexFile = 'sitemap_index_browse_role.xml';
-  } else if (type === 'city') {
-    filePrefix = 'sitemap_browse_city';
-    indexFile = 'sitemap_index_browse_city.xml';
-  } else {
-    filePrefix = 'pSEO_page';
-    indexFile = 'sitemap_index_pSEO.xml';
-  }
-
-  // Generate and upload individual sitemap files
-  for (const url of urls) {
-    if (currentUrls.length >= MAX_URLS_PER_SITEMAP) {
-      const sitemapFileName = `${filePrefix}_${sitemapIndex}.xml`;
-      await uploadToS3(type, sitemapFileName, generateSitemapXmlContent(currentUrls));
-      sitemapFiles.push(sitemapFileName);
-      currentUrls = [];
-      sitemapIndex++;
-    }
-    currentUrls.push(url);
-  }
-
-  if (currentUrls.length > 0) {
-    const sitemapFileName = `${filePrefix}_${sitemapIndex}.xml`;
-    await uploadToS3(type, sitemapFileName, generateSitemapXmlContent(currentUrls));
-    sitemapFiles.push(sitemapFileName);
-  }
-
-  // Upload the sitemap index
-  await uploadToS3(type, indexFile, generateSitemapIndex(sitemapFiles, type));
-
-  console.log(`Sitemap ${type} generated and uploaded successfully.`);
-};
-
-const generateSitemapXmlContent = (urls) => {
-  const urlset = create('urlset', { version: '1.0', encoding: 'UTF-8' })
-    .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
-
-  urls.forEach(url => {
-    urlset.ele('url')
-      .ele('loc', url).up()
-      .ele('lastmod', new Date().toISOString()).up()
-      .ele('changefreq', 'daily').up()
-      .ele('priority', '1.0').up();
-  });
-
-  return urlset.end({ pretty: true });
-};
-
-const generateSitemapIndex = (sitemapFiles, type) => {
+    const createIndex = (files, pathType) => {
   const index = create('urlset', { version: '1.0', encoding: 'UTF-8' })
     .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
-    let fullFilePaths;
-    if (type === 'role') {
-      fullFilePaths = `${S3_PUBLIC_PATH_ROLE}`;
-    } else if (type === 'city') {
-      fullFilePaths = `${S3_PUBLIC_PATH_CITY}`;
-    } else {
-      fullFilePaths = `sitemap_pSEO/`;
-    }
-  sitemapFiles.forEach(file => {
+  let fullFilePaths;
+  if (pathType === 'role') {
+    fullFilePaths = PATHS[pathType];
+  } else if (pathType === 'city') {
+    fullFilePaths = PATHS[pathType];
+  } else {
+    fullFilePaths = `sitemap_pSEO/`;
+  }
+  files.forEach(file => {
     index.ele('url')
       .ele('loc', `https://www.jobtrees.com/api/${fullFilePaths}${file}`).up()
       .ele('lastmod', new Date().toISOString()).up()
@@ -368,34 +118,56 @@ const generateSitemapIndex = (sitemapFiles, type) => {
   return index.end({ pretty: true });
 };
 
-const uploadToS3 = async (type, fileName, fileContent) => {
+const uploadToS3 = async (type, fileName, content) => {
   try {
-    let fullFilePath;
-    if (type === 'role') {
-      fullFilePath = `${S3_PUBLIC_PATH_ROLE}${fileName}`;
-    } else if (type === 'city') {
-      fullFilePath = `${S3_PUBLIC_PATH_CITY}${fileName}`;
-    } else {
-      fullFilePath = `${S3_PUBLIC_PATH}${fileName}`;
-    }
-    console.log(`Uploading ${fullFilePath} to S3...`);
+    const path = `${PATHS[type]}${fileName}`;
+    console.log(`Uploading: ${path}`);
     await s3Client.send(new PutObjectCommand({
       Bucket: S3_BUCKET,
-      Key: fullFilePath,
-      Body: fileContent,
+      Key: path,
+      Body: content,
       ContentType: 'application/xml',
-      ACL: 'public-read'
+      ACL: 'public-read',
     }));
-    console.log(`File uploaded: ${fullFilePath}`);
-  } catch (error) {
-    console.error(`Error uploading ${fileName} to S3:`, error);
+  } catch (e) {
+    console.error(`Upload failed for ${fileName}:`, e);
   }
 };
 
+const generateSitemap = async (type) => {
+  const MAX = 5000;
+  const locations = getStaticLocations();
+  const roles = await fetchRoles();
+  let urls = [];
+
+  if (type === 'role') urls = roles.map(r => `https://www.jobtrees.com/browse-careers/${formatRole(r)}`);
+  else if (type === 'city') urls = locations.map(({ city, stateAbbr }) => `https://www.jobtrees.com/browse-careers/${formatCity(city)}-${stateAbbr}`);
+  else urls = roles.flatMap(r => locations.map(({ city, stateAbbr }) => buildUrl(r, city, stateAbbr)));
+
+  const prefix = type === 'role' ? 'sitemap_browse_role' : type === 'city' ? 'sitemap_browse_city' : 'pSEO_page';
+  const indexFile = type === 'role' ? 'sitemap_index_browse_role.xml' : type === 'city' ? 'sitemap_index_browse_city.xml' : 'sitemap_index_pSEO.xml';
+
+  const chunks = [];
+  for (let i = 0; i < urls.length; i += MAX) chunks.push(urls.slice(i, i + MAX));
+
+  const sitemapFiles = await Promise.all(chunks.map((chunk, i) =>
+    limit(async () => {
+      const file = `${prefix}_${i + 1}.xml`;
+      const xml = createXmlContent(chunk);
+      await uploadToS3(type, file, xml);
+      return file;
+    })
+  ));
+
+  const indexXml = createIndex(sitemapFiles, type);
+  await uploadToS3(type, indexFile, indexXml);
+  console.log(`${type} sitemap complete.`);
+};
+
 (async () => {
-  // await getExistingSitemapFiles()
-  await deleteOutdatedSitemaps();
-  await generateSitemapXml('role');
-  await generateSitemapXml('city');
-  await generateSitemapXml('all');
+  await Promise.all([
+    generateSitemap('role'),
+    generateSitemap('city'),
+    generateSitemap('all'),
+  ]);
 })();
