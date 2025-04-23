@@ -379,6 +379,7 @@ const rl = readline.createInterface({
       'jobtrees_postings',
       'indeed_jobs_postings',
       'big_job_site_postings',
+      'perengo_postings',
       'adzuna_postings',
     ];
     // await generateSitemapsAndCleanup(indices)
