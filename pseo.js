@@ -19,6 +19,7 @@ const PATHS = {
   all: process.env.S3_PUBLIC_PATH2,
   city: process.env.S3_PUBLIC_PATH3,
   role: process.env.S3_PUBLIC_PATH4,
+  company: process.env.S3_PUBLIC_PATH6,
 };
 
 const s3Client = new S3Client({ region, credentials });
@@ -104,6 +105,8 @@ const createXmlContent = (urls) =>
     fullFilePaths = PATHS[pathType];
   } else if (pathType === 'city') {
     fullFilePaths = PATHS[pathType];
+  } else if (pathType === 'company') {
+    fullFilePaths = PATHS[pathType];
   } else {
     fullFilePaths = `sitemap_pSEO/`;
   }
@@ -142,10 +145,23 @@ const generateSitemap = async (type) => {
 
   if (type === 'role') urls = roles.map(r => `https://www.jobtrees.com/browse-careers/${formatRole(r)}`);
   else if (type === 'city') urls = locations.map(({ city, stateAbbr }) => `https://www.jobtrees.com/browse-careers/${formatCity(city)}-${stateAbbr}`);
+  else if (type === 'company') urls = locations.map(({ city, stateAbbr }) => `https://www.jobtrees.com/top-companies/${formatCity(city)}-${stateAbbr}`);
   else urls = roles.flatMap(r => locations.map(({ city, stateAbbr }) => buildUrl(r, city, stateAbbr)));
 
-  const prefix = type === 'role' ? 'sitemap_browse_role' : type === 'city' ? 'sitemap_browse_city' : 'pSEO_page';
-  const indexFile = type === 'role' ? 'sitemap_index_browse_role.xml' : type === 'city' ? 'sitemap_index_browse_city.xml' : 'sitemap_index_pSEO.xml';
+  const prefix = type === 'role'
+  ? 'sitemap_browse_role'
+  : type === 'city'
+  ? 'sitemap_browse_city'
+  : type === 'company'
+  ? 'sitemap_browse_company'
+  : 'pSEO_page';
+  const indexFile = type === 'role'
+  ? 'sitemap_index_browse_role.xml'
+  : type === 'city'
+  ? 'sitemap_index_browse_city.xml'
+  : type === 'company'
+  ? 'index_browse_company.xml'
+  : 'sitemap_index_pSEO.xml';
 
   const chunks = [];
   for (let i = 0; i < urls.length; i += MAX) chunks.push(urls.slice(i, i + MAX));
@@ -168,6 +184,7 @@ const generateSitemap = async (type) => {
   await Promise.all([
     generateSitemap('role'),
     generateSitemap('city'),
+    generateSitemap('company'),
     generateSitemap('all'),
   ]);
 })();

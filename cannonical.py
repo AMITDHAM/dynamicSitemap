@@ -1,22 +1,26 @@
-import requests
-import xml.etree.ElementTree as ET
-from bs4 import BeautifulSoup
-import pandas as pd
 import os
 import time
 import json
+import requests
 import logging
 import sqlite3
+import traceback
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import pandas as pd
+import xml.etree.ElementTree as ET
+
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from tqdm import tqdm
+from openpyxl import Workbook
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
-from openpyxl import Workbook
-from dotenv import load_dotenv
-load_dotenv(".env.local")  # loads from .env.local
 
-# Setup logging
+# Load .env config
+load_dotenv(".env.local")
+
+# Logging config
 log_file = "canonical_checker.log"
 logging.basicConfig(
     filename=log_file,
@@ -30,34 +34,34 @@ SAVE_DIR = os.getcwd()
 OUTPUT_FILE = os.path.join(SAVE_DIR, "canonical_mismatches.xlsx")
 CACHE_DB = os.path.join(SAVE_DIR, "url_cache.sqlite")
 
-# AWS S3 Settings
-accessKeyId = os.getenv("accessKeyId")
-secretAccessKey = os.getenv("secretAccessKey")
-region = os.getenv("region")
-S3_BUCKET = os.getenv("S3_BUCKET")
-S3_PUBLIC_PATH = os.getenv("S3_PUBLIC_PATH5", "")
-# Sitemap URLs to check
+# AWS S3
+accessKeyId = os.getenv("AWS_ACCESS_KEY_ID")
+secretAccessKey = os.getenv("AWS_SECRET_ACCESS_KEY")
+region = os.getenv("AWS_REGION", "us-east-1")
+
+S3_BUCKET = "jobtrees-media-assets"
+S3_PUBLIC_PATH = "cannonical/"
+
+# Sitemap URLs
 sitemap_list = [
     "https://www.jobtrees.com/sitemap_page.xml",
-    "https://www.jobtrees.com/sitemap_hierarchy.xml",
-    "https://www.jobtrees.com/sitemap_article.xml",
-    "https://www.jobtrees.com/sitemap_role.xml",
-    "https://www.jobtrees.com/sitemap_tree.xml",
-    "https://www.jobtrees.com/sitemap_video.xml",
-    "https://www.jobtrees.com/sitemap_videoArticle.xml",
-    "https://www.jobtrees.com/api/sitemap_pSEO/sitemap_index_pSEO.xml",
-    "https://www.jobtrees.com/api/sitemap_city/sitemap_index_browse_city.xml",
-    "https://www.jobtrees.com/api/sitemap_role/sitemap_index_browse_role.xml",
-    "https://www.jobtrees.com/api/sitemap/sitemap_Alljobs.xml",
-    "https://www.jobtrees.com/api/sitemap/jobtrees_postings_1.xml"
+    # "https://www.jobtrees.com/sitemap_hierarchy.xml",
+    # "https://www.jobtrees.com/sitemap_article.xml",
+    # "https://www.jobtrees.com/sitemap_role.xml",
+    # "https://www.jobtrees.com/sitemap_tree.xml",
+    # "https://www.jobtrees.com/sitemap_video.xml",
+    # "https://www.jobtrees.com/sitemap_videoArticle.xml",
+    # "https://www.jobtrees.com/api/sitemap_pSEO/sitemap_index_pSEO.xml",
+    # "https://www.jobtrees.com/api/sitemap_city/sitemap_index_browse_city.xml",
+    # "https://www.jobtrees.com/api/sitemap_role/sitemap_index_browse_role.xml",
+    # "https://www.jobtrees.com/api/sitemap/sitemap_Alljobs.xml",
+    # "https://www.jobtrees.com/api/sitemap/jobtrees_postings_1.xml"
 ]
-
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-# Retry session
 def create_retry_session():
     session = requests.Session()
     retries = Retry(
@@ -73,8 +77,6 @@ def create_retry_session():
     return session
 
 session = create_retry_session()
-
-# Thread-safe SQLite setup
 thread_local = threading.local()
 
 def get_connection():
@@ -172,9 +174,32 @@ def check_canonical_mismatch(url_list, max_workers=30):
 
     return mismatches
 
+def upload_to_s3():
+    try:
+        if accessKeyId and secretAccessKey:
+            s3 = boto3.client(
+                "s3",
+                aws_access_key_id=accessKeyId,
+                aws_secret_access_key=secretAccessKey,
+                region_name=region,
+            )
+        else:
+            s3 = boto3.client("s3")  # IAM role fallback
+
+        upload_path = f"{S3_PUBLIC_PATH}canonical_mismatches.xlsx"
+        print(f"🔍 Uploading to: s3://{S3_BUCKET}/{upload_path}")
+        s3.upload_file(OUTPUT_FILE, S3_BUCKET, upload_path)
+        print(f"🚀 Uploaded to s3://{S3_BUCKET}/{upload_path}")
+        logging.info("Upload successful")
+
+    except Exception as e:
+        print("❌ Failed to upload to S3.")
+        traceback.print_exc()
+        logging.error("S3 upload failed: %s", str(e))
+
 if __name__ == "__main__":
     global_start = time.time()
-    logging.info("Starting Canonical Checker Script")
+    logging.info("=== Starting Canonical Checker Script ===")
     all_mismatches = {}
 
     for i, sitemap_url in enumerate(sitemap_list, 1):
@@ -186,48 +211,32 @@ if __name__ == "__main__":
 
         if sitemap_urls:
             mismatches = check_canonical_mismatch(sitemap_urls)
-            logging.info(f"{len(mismatches)} mismatches found in sitemap")
+            logging.info(f"{len(mismatches)} mismatches found")
             if mismatches:
                 name_part = sitemap_url.split("/")[-1].replace(".xml", "").replace("sitemap_", "")
                 sheet_name = f"{i}_{name_part[:25]}"
                 all_mismatches[sheet_name] = mismatches
-        else:
-            logging.warning(f"No URLs found in {sitemap_url}.")
 
         elapsed = round(time.time() - start, 2)
         print(f"✅ Finished {sitemap_url} in {elapsed}s")
         logging.info(f"Finished {sitemap_url} in {elapsed}s")
 
-    # Always create the Excel file, even if empty
     os.makedirs(SAVE_DIR, exist_ok=True)
-
     with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
         if all_mismatches:
             for sheet_name, mismatches in all_mismatches.items():
                 df = pd.DataFrame(mismatches, columns=["Sitemap URL", "Canonical URL", "Status Code"])
                 df.to_excel(writer, index=False, sheet_name=sheet_name)
         else:
-            # Add a sheet with headers only
             df = pd.DataFrame(columns=["Sitemap URL", "Canonical URL", "Status Code"])
             df.to_excel(writer, index=False, sheet_name="No Data")
-
 
     print(f"📁 Excel file saved to: {OUTPUT_FILE}")
     logging.info(f"Excel file saved to: {OUTPUT_FILE}")
 
-    # Upload to S3
-    try:
-        import boto3
-        s3 = boto3.client('s3', aws_access_key_id=accessKeyId, aws_secret_access_key=secretAccessKey, region_name=region)
-        s3.upload_file(OUTPUT_FILE, S3_BUCKET, f"{S3_PUBLIC_PATH}canonical_mismatches.xlsx")
-        print(f"🚀 Uploaded to s3://{S3_BUCKET}/{S3_PUBLIC_PATH}canonical_mismatches.xlsx")
-        logging.info(f"Uploaded to s3://{S3_BUCKET}/{S3_PUBLIC_PATH}canonical_mismatches.xlsx")
-    except Exception as e:
-        logging.error(f"S3 Upload Failed: {e}")
-        print("❌ Failed to upload to S3. Check credentials or bucket configuration.")
+    upload_to_s3()
 
     total_time = round(time.time() - global_start, 2)
     print("🧠 Finished. Closing DB connection and saving logs.")
     logging.info("Script completed in %.2fs", total_time)
-    logging.info("=============================")
-    logging.info("\n\n")
+    logging.info("=============================\n\n")
