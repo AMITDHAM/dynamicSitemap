@@ -123,6 +123,8 @@ const createXmlContent = (urls) =>
 
 const uploadToS3 = async (type, fileName, content) => {
   try {
+    console.log(process.env.accessKeyId);
+    console.log(process.env.region);
     const path = `${PATHS[type]}${fileName}`;
     console.log(`Uploading: ${path}`);
     await s3Client.send(new PutObjectCommand({
