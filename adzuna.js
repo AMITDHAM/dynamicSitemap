@@ -397,8 +397,8 @@ const rl = readline.createInterface({
       'big_job_site_postings',
       'indeed_jobs_postings',
     ];
-    await generateSitemapsAndCleanup(indicess)
-    await generateAllSitemaps(indices, indicess);
+    await generateIndexCountSitemap(indicess)
+    // await generateAllSitemaps(indices, indicess);
   } catch (error) {
     console.error('Error during the process:', error.message);
   } finally {

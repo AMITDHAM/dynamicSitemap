@@ -45,17 +45,17 @@ S3_PUBLIC_PATH = "cannonical/"
 # Sitemap URLs
 sitemap_list = [
     "https://www.jobtrees.com/sitemap_page.xml",
-    # "https://www.jobtrees.com/sitemap_hierarchy.xml",
-    # "https://www.jobtrees.com/sitemap_article.xml",
-    # "https://www.jobtrees.com/sitemap_role.xml",
-    # "https://www.jobtrees.com/sitemap_tree.xml",
-    # "https://www.jobtrees.com/sitemap_video.xml",
-    # "https://www.jobtrees.com/sitemap_videoArticle.xml",
-    # "https://www.jobtrees.com/api/sitemap_pSEO/sitemap_index_pSEO.xml",
-    # "https://www.jobtrees.com/api/sitemap_city/sitemap_index_browse_city.xml",
-    # "https://www.jobtrees.com/api/sitemap_role/sitemap_index_browse_role.xml",
-    # "https://www.jobtrees.com/api/sitemap/sitemap_Alljobs.xml",
-    # "https://www.jobtrees.com/api/sitemap/jobtrees_postings_1.xml"
+    "https://www.jobtrees.com/sitemap_hierarchy.xml",
+    "https://www.jobtrees.com/sitemap_article.xml",
+    "https://www.jobtrees.com/sitemap_role.xml",
+    "https://www.jobtrees.com/sitemap_tree.xml",
+    "https://www.jobtrees.com/sitemap_video.xml",
+    "https://www.jobtrees.com/sitemap_videoArticle.xml",
+    "https://www.jobtrees.com/api/sitemap_pSEO/sitemap_index_pSEO.xml",
+    "https://www.jobtrees.com/api/sitemap_city/sitemap_index_browse_city.xml",
+    "https://www.jobtrees.com/api/sitemap_role/sitemap_index_browse_role.xml",
+    "https://www.jobtrees.com/api/sitemap/sitemap_Alljobs.xml",
+    "https://www.jobtrees.com/api/sitemap/jobtrees_postings_1.xml"
 ]
 
 HEADERS = {

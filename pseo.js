@@ -162,7 +162,7 @@ const generateSitemap = async (type) => {
   : type === 'city'
   ? 'sitemap_index_browse_city.xml'
   : type === 'company'
-  ? 'index_browse_company.xml'
+  ? 'sitemap_index_browse_company.xml'
   : 'sitemap_index_pSEO.xml';
 
   const chunks = [];
