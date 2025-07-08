@@ -448,7 +448,7 @@ const rl = readline.createInterface({
       'perengo_postings',
       'adzuna_postings',
     ];
-    // await generateSitemapsAndCleanup(indices)
+    await generateSitemapsAndCleanup(indices)
     await generateAllSitemaps(indices);
     await generateIndexCountSitemap(indices);
   } catch (error) {
