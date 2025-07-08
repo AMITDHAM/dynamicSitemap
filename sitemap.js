@@ -368,6 +368,72 @@ const generateAllSitemaps = async (indices) => {
   }
 };
 
+const generateIndexCountSitemap = async (indices) => {
+  const root = create('urlset').att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+  const pageSize = 5000;
+
+  for (const indexName of indices) {
+    try {
+      const requestBody = {
+        query: {
+          term: {
+            status: 'active',
+          },
+        },
+      };
+
+      const request = {
+        host: OPEN_SEARCH_URL,
+        path: `/${indexName}/_count`,
+        service: 'es',
+        region,
+        method: 'POST',
+        body: JSON.stringify(requestBody),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      };
+
+      aws4.sign(request, credentials);
+
+      const response = await fetch(`https://${request.host}${request.path}`, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      });
+
+      const responseBody = await response.json();
+      const totalCount = responseBody.count;
+
+      if (typeof totalCount !== 'number') {
+        throw new Error(`Invalid count for index ${indexName}`);
+      }
+
+      const sitemapCount = Math.ceil(totalCount / pageSize);
+      const locValue = `Index: ${indexName}, Active Postings: ${totalCount}, Sitemaps to Generate: ${sitemapCount}`;
+
+      root.ele('url')
+        .ele('loc', locValue).up()
+        .ele('lastmod', new Date().toISOString()).up()
+        .ele('changefreq', 'daily').up()
+        .ele('priority', 1.0).up();
+
+      console.log(`Index: ${indexName}`);
+      console.log(`✔️ Active Job Postings: ${totalCount}`);
+      console.log(`📄 Sitemaps to Generate: ${sitemapCount}`);
+    } catch (error) {
+      console.error(`❌ Error processing index "${indexName}":`, error.message);
+    }
+  }
+
+  const xmlString = root.end({ pretty: true });
+  const fileName = 'sitemap_index_counts.xml';
+
+  await uploadToS3(fileName, xmlString);
+  const fileUrl = `https://www.jobtrees.com/api/sitemap/${fileName}`;
+  console.log(`✅ Index count sitemap uploaded: ${fileUrl}`);
+};
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -384,6 +450,7 @@ const rl = readline.createInterface({
     ];
     // await generateSitemapsAndCleanup(indices)
     await generateAllSitemaps(indices);
+    await generateIndexCountSitemap(indices);
   } catch (error) {
     console.error('Error during the process:', error.message);
   } finally {

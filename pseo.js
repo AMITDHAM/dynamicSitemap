@@ -5,6 +5,7 @@ import {
 import { create } from 'xmlbuilder';
 import dotenv from 'dotenv';
 import pLimit from 'p-limit';
+import aws4 from 'aws4';
 
 dotenv.config({ path: '.env.local' });
 
@@ -15,6 +16,7 @@ const credentials = {
   secretAccessKey: process.env.secretAccessKey,
 };
 const S3_BUCKET = process.env.S3_BUCKET;
+const OPEN_SEARCH_URL = process.env.OPEN_SEARCH_URL;
 const PATHS = {
   all: process.env.S3_PUBLIC_PATH2,
   city: process.env.S3_PUBLIC_PATH3,
@@ -97,7 +99,7 @@ const createXmlContent = (urls) =>
     .ele(urls.map(url => ({ url: { loc: url, lastmod: new Date().toISOString(), changefreq: 'daily', priority: '1.0' } })))
     .end({ pretty: true });
 
-    const createIndex = (files, pathType) => {
+const createIndex = (files, pathType) => {
   const index = create('urlset', { version: '1.0', encoding: 'UTF-8' })
     .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
   let fullFilePaths;
@@ -123,8 +125,6 @@ const createXmlContent = (urls) =>
 
 const uploadToS3 = async (type, fileName, content) => {
   try {
-    console.log(process.env.accessKeyId);
-    console.log(process.env.region);
     const path = `${PATHS[type]}${fileName}`;
     console.log(`Uploading: ${path}`);
     await s3Client.send(new PutObjectCommand({
@@ -139,31 +139,169 @@ const uploadToS3 = async (type, fileName, content) => {
   }
 };
 
+const checkJobExists = async (type, role, city, state) => {
+  const indices = [
+    'jobtrees_postings',
+    'indeed_jobs_postings',
+    'big_job_site_postings',
+    'perengo_postings',
+    'adzuna_postings',
+  ];
+
+  const searchRequests = indices.map(async (indexName) => {
+    let searchRequestBody;
+    if (type === 'all') {
+      searchRequestBody = {
+        query: {
+          bool: {
+            must: [
+              { terms: { "jobTreesTitles.keyword": [role] } },
+              { term: { "city.keyword": city } },
+              { term: { "state.keyword": state.trim() } }
+            ],
+          },
+        },
+        size: 1,
+      };
+    }
+    else if (type === 'role') {
+      searchRequestBody = {
+        query: {
+          bool: {
+            must: [
+              { terms: { "jobTreesTitles.keyword": [role] } },
+            ],
+          },
+        },
+        size: 1,
+      };
+    }
+    else if (type === 'city') {
+      searchRequestBody = {
+        query: {
+          bool: {
+            must: [
+              { term: { "city.keyword": city } },
+              { term: { "state.keyword": state.trim() } },
+            ],
+          },
+        },
+        size: 1,
+      };
+    }
+
+    const searchRequest = {
+      host: OPEN_SEARCH_URL,
+      path: `/${indexName}/_search`,
+      service: 'es',
+      region,
+      method: 'POST',
+      body: JSON.stringify(searchRequestBody),
+      headers: { 'Content-Type': 'application/json' },
+    };
+
+    aws4.sign(searchRequest, credentials);
+    try {
+      const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
+        method: searchRequest.method,
+        headers: searchRequest.headers,
+        body: searchRequest.body,
+      });
+
+      const searchResponseBody = await searchResponse.json();
+      const jobCount = searchResponseBody.hits?.total?.value || 0;
+      if (type === 'all') {
+        console.log(`✅ Found ${jobCount} jobs for "${role}" in "${city}, ${state}" from "${indexName}"`);
+      }
+      else if (type === 'role') {
+        console.log(`✅ Found ${jobCount} jobs for "${role}" from "${indexName}"`);
+      }
+      else if (type === 'city') {
+        console.log(`✅ Found ${jobCount} jobs for "${city}, ${state}" from "${indexName}"`);
+      }
+
+      return jobCount > 0;
+    } catch (error) {
+      console.error(`❌ Error checking jobs in index "${indexName}" for "${role}" in "${city}, ${state}":`, error);
+      return false;
+    }
+  });
+
+  const results = await Promise.all(searchRequests);
+  const jobExists = results.some(result => result);
+  return jobExists;
+};
+
+const checkJobExistsThrottled = async (type, role, city, state) => {
+  return limit(() => checkJobExists(type, role, city, state));
+};
+
 const generateSitemap = async (type) => {
   const MAX = 5000;
   const locations = getStaticLocations();
   const roles = await fetchRoles();
   let urls = [];
 
-  if (type === 'role') urls = roles.map(r => `https://www.jobtrees.com/browse-careers/${formatRole(r)}`);
-  else if (type === 'city') urls = locations.map(({ city, stateAbbr }) => `https://www.jobtrees.com/browse-careers/${formatCity(city)}-${stateAbbr}`);
-  else if (type === 'company') urls = locations.map(({ city, stateAbbr }) => `https://www.jobtrees.com/top-companies/${formatCity(city)}-${stateAbbr}`);
-  else urls = roles.flatMap(r => locations.map(({ city, stateAbbr }) => buildUrl(r, city, stateAbbr)));
+  if (type === 'role') {
+    // Filter roles that have at least one job
+    const validRoles = [];
+    for (const role of roles) {
+      const hasJobs = await checkJobExistsThrottled(type, role, null, null);
+      if (hasJobs) {
+        validRoles.push(role);
+        urls.push(`https://www.jobtrees.com/browse-careers/${formatRole(role)}`);
+      } else {
+        console.log(`❌ Skipping role "${role}" - no jobs found`);
+      }
+    }
+  } 
+  else if (type === 'city') {
+    // Filter cities that have at least one job
+    const validLocations = [];
+    for (const location of locations) {
+      const hasJobs = await checkJobExistsThrottled(type, null, location.city, location.state);
+      if (hasJobs) {
+        validLocations.push(location);
+        urls.push(`https://www.jobtrees.com/browse-careers/${formatCity(location.city)}-${location.stateAbbr}`);
+      } else {
+        console.log(`❌ Skipping location "${location.city}, ${location.state}" - no jobs found`);
+      }
+    }
+  }
+  else if (type === 'company') {
+    urls = locations.map(({ city, stateAbbr }) => `https://www.jobtrees.com/top-companies/${formatCity(city)}-${stateAbbr}`);
+    urls.push('https://www.jobtrees.com/top-companies/remote-us');
+  }
+  else {
+    // For 'all' type, check each role-location combination
+    const validCombinations = [];
+    for (const role of roles) {
+      for (const location of locations) {
+        const hasJobs = await checkJobExistsThrottled('all', role, location.city, location.state);
+        if (hasJobs) {
+          validCombinations.push({ role, location });
+          urls.push(buildUrl(role, location.city, location.stateAbbr));
+        } else {
+          console.log(`❌ Skipping combination "${role}" in "${location.city}, ${location.state}" - no jobs found`);
+        }
+      }
+    }
+  }
 
   const prefix = type === 'role'
-  ? 'sitemap_browse_role'
-  : type === 'city'
-  ? 'sitemap_browse_city'
-  : type === 'company'
-  ? 'sitemap_browse_company'
-  : 'pSEO_page';
+    ? 'sitemap_browse_role'
+    : type === 'city'
+      ? 'sitemap_browse_city'
+      : type === 'company'
+        ? 'sitemap_browse_company'
+        : 'pSEO_page';
   const indexFile = type === 'role'
-  ? 'sitemap_index_browse_role.xml'
-  : type === 'city'
-  ? 'sitemap_index_browse_city.xml'
-  : type === 'company'
-  ? 'sitemap_index_browse_company.xml'
-  : 'sitemap_index_pSEO.xml';
+    ? 'sitemap_index_browse_role.xml'
+    : type === 'city'
+      ? 'sitemap_index_browse_city.xml'
+      : type === 'company'
+        ? 'sitemap_index_browse_company.xml'
+        : 'sitemap_index_pSEO.xml';
 
   const chunks = [];
   for (let i = 0; i < urls.length; i += MAX) chunks.push(urls.slice(i, i + MAX));
@@ -179,7 +317,7 @@ const generateSitemap = async (type) => {
 
   const indexXml = createIndex(sitemapFiles, type);
   await uploadToS3(type, indexFile, indexXml);
-  console.log(`${type} sitemap complete.`);
+  console.log(`${type} sitemap complete. ${urls.length} URLs included.`);
 };
 
 (async () => {
