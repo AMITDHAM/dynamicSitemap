@@ -110,6 +110,8 @@ const createIndex = (files, pathType) => {
     fullFilePaths = PATHS[pathType];
   } else if (pathType === 'company') {
     fullFilePaths = PATHS[pathType];
+  } else if (pathType === 'remote') {
+    fullFilePaths = PATHS[pathType] || 'sitemap_remote/';
   } else {
     fullFilePaths = `sitemap_pSEO/`;
   }
