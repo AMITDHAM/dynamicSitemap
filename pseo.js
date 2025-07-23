@@ -22,6 +22,7 @@ const PATHS = {
   city: process.env.S3_PUBLIC_PATH3,
   role: process.env.S3_PUBLIC_PATH4,
   company: process.env.S3_PUBLIC_PATH6,
+  remote: process.env.S3_PUBLIC_PATH7 || 'sitemap_remote/',
 };
 
 const s3Client = new S3Client({ region, credentials });
@@ -254,7 +255,7 @@ const generateSitemap = async (type) => {
         console.log(`❌ Skipping role "${role}" - no jobs found`);
       }
     }
-  } 
+  }
   else if (type === 'city') {
     // Filter cities that have at least one job
     const validLocations = [];
@@ -320,11 +321,107 @@ const generateSitemap = async (type) => {
   console.log(`${type} sitemap complete. ${urls.length} URLs included.`);
 };
 
+const checkRemoteJobExists = async (role) => {
+  const indices = [
+    'jobtrees_postings',
+    'indeed_jobs_postings',
+    'big_job_site_postings',
+    'perengo_postings',
+    'adzuna_postings',
+  ];
+
+  const searchRequests = indices.map(async (indexName) => {
+    const searchRequestBody = {
+      query: {
+        bool: {
+          must: [
+            { terms: { "jobTreesTitles.keyword": [role] } },
+            { term: { "employerType": "remote" } } // Simple term query works for arrays
+          ],
+        },
+      },
+      size: 1,
+    };
+
+    const searchRequest = {
+      host: OPEN_SEARCH_URL,
+      path: `/${indexName}/_search`,
+      service: 'es',
+      region,
+      method: 'POST',
+      body: JSON.stringify(searchRequestBody),
+      headers: { 'Content-Type': 'application/json' },
+    };
+
+    aws4.sign(searchRequest, credentials);
+    try {
+      const searchResponse = await fetch(`https://${searchRequest.host}${searchRequest.path}`, {
+        method: searchRequest.method,
+        headers: searchRequest.headers,
+        body: searchRequest.body,
+      });
+
+      const searchResponseBody = await searchResponse.json();
+      const jobCount = searchResponseBody.hits?.total?.value || 0;
+      console.log(`✅ Found ${jobCount} remote jobs for "${role}" from "${indexName}"`);
+      return jobCount > 0;
+    } catch (error) {
+      console.error(`❌ Error checking remote jobs in index "${indexName}" for "${role}":`, error);
+      return false;
+    }
+  });
+
+  const results = await Promise.all(searchRequests);
+  return results.some(result => result);
+};
+
+const checkRemoteJobExistsThrottled = async (role) => {
+  return limit(() => checkRemoteJobExists(role));
+};
+
+const generateRemoteSitemap = async () => {
+  const MAX = 5000;
+  const roles = await fetchRoles();
+  let urls = [];
+
+  // Filter roles that have at least one remote job
+  const validRoles = [];
+  for (const role of roles) {
+    const hasRemoteJobs = await checkRemoteJobExistsThrottled(role);
+    if (hasRemoteJobs) {
+      validRoles.push(role);
+      urls.push(`https://www.jobtrees.com/browse-careers/remote-${formatRole(role)}-jobs`);
+    } else {
+      console.log(`❌ Skipping role "${role}" - no remote jobs found`);
+    }
+  }
+
+  const prefix = 'sitemap_remote_role';
+  const indexFile = 'sitemap_index_remote.xml';
+
+  const chunks = [];
+  for (let i = 0; i < urls.length; i += MAX) chunks.push(urls.slice(i, i + MAX));
+
+  const sitemapFiles = await Promise.all(chunks.map((chunk, i) =>
+    limit(async () => {
+      const file = `${prefix}_${i + 1}.xml`;
+      const xml = createXmlContent(chunk);
+      await uploadToS3('remote', file, xml);
+      return file;
+    })
+  ));
+
+  const indexXml = createIndex(sitemapFiles, 'remote');
+  await uploadToS3('remote', indexFile, indexXml);
+  console.log(`Remote sitemap complete. ${urls.length} URLs included.`);
+};
+
 (async () => {
   await Promise.all([
     generateSitemap('role'),
     generateSitemap('city'),
     generateSitemap('company'),
     generateSitemap('all'),
+    generateRemoteSitemap(),
   ]);
 })();
