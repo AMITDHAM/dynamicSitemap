@@ -108,7 +108,7 @@ const checkJobExists = async (type, role, city, state) => {
         query: {
           bool: {
             must: [
-              { terms: { "jobTreesTitles.keyword": [role] } },
+              { terms: { "jobTreesTitle.keyword": [role] } },
               { term: { "city.keyword": city } },
               { term: { "state.keyword": state.trim() } }
             ],
@@ -122,7 +122,7 @@ const checkJobExists = async (type, role, city, state) => {
         query: {
           bool: {
             must: [
-              { terms: { "jobTreesTitles.keyword": [role] } },
+              { terms: { "jobTreesTitle.keyword": [role] } },
             ],
           },
         },

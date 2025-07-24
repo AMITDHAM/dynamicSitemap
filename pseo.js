@@ -94,6 +94,10 @@ const fetchRoles = async () => {
   }
 };
 
+// const fetchRoles = async () => {
+//   return ["travel consultant", "product manager", "marketing specialist"];
+// };
+
 const createXmlContent = (urls) =>
   create('urlset', { version: '1.0', encoding: 'UTF-8' })
     .att('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9')
@@ -158,7 +162,7 @@ const checkJobExists = async (type, role, city, state) => {
         query: {
           bool: {
             must: [
-              { terms: { "jobTreesTitles.keyword": [role] } },
+              { match: { "jobTreesTitle.keyword": role?.toLowerCase() } },
               { term: { "city.keyword": city } },
               { term: { "state.keyword": state.trim() } }
             ],
@@ -172,7 +176,7 @@ const checkJobExists = async (type, role, city, state) => {
         query: {
           bool: {
             must: [
-              { terms: { "jobTreesTitles.keyword": [role] } },
+              { match: { "jobTreesTitle.keyword": role?.toLowerCase()  } },
             ],
           },
         },
@@ -337,8 +341,8 @@ const checkRemoteJobExists = async (role) => {
       query: {
         bool: {
           must: [
-            { terms: { "jobTreesTitles.keyword": [role] } },
-            { term: { "employerType": "remote" } } // Simple term query works for arrays
+            { match: { "jobTreesTitle.keyword": role?.toLowerCase() } },
+            { term: { "employerType": "remote" } }
           ],
         },
       },
@@ -365,6 +369,8 @@ const checkRemoteJobExists = async (role) => {
 
       const searchResponseBody = await searchResponse.json();
       const jobCount = searchResponseBody.hits?.total?.value || 0;
+      console.log('Query:', JSON.stringify(searchRequestBody, null, 2));
+console.log('Response:', JSON.stringify(searchResponseBody, null, 2));
       console.log(`✅ Found ${jobCount} remote jobs for "${role}" from "${indexName}"`);
       return jobCount > 0;
     } catch (error) {
