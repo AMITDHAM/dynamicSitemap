@@ -22,5 +22,13 @@ COPY . .
 # For example, if you're using .env files, you can copy the .env.local file into the container:
 COPY .env.local .env.local
 
-# Run the application (ensure your entrypoint is correct)
+# ✅ Explicitly copy your data files
+COPY cities.json ./cities.json
+COPY roles.json ./roles.json
+COPY companies.json ./companies.json
+
+# Expose the port if needed (example: 3000)
+# EXPOSE 3000
+
+# Run the application
 CMD ["node", "pseo.js"]
