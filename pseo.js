@@ -462,14 +462,14 @@ const generateSitemap = async (type, jobs, roles, locations, companies) => {
 
     // Generate sitemaps in sequence to avoid overwhelming resources
     const sitemapTypes = [
-      // 'role',
-      // 'city',
-      // 'company',
-      // 'all',
-      // 'roleCompany',
-      // 'cityCompany',
+      'role',
+      'city',
+      'company',
+      'all',
+      'roleCompany',
+      'cityCompany',
       'companyOnly',
-      // 'roleCityCompany',
+      'roleCityCompany',
     ];
 
     for (const type of sitemapTypes) {
